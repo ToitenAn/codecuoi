@@ -99,19 +99,17 @@ with st.sidebar:
 
     if st.session_state.data_thi:
         st.markdown("---")
-        # LOGIC MỚI: Câu sai = Câu đã làm sai + Câu chưa làm
+        # Nút bấm: Làm lại câu SAI + câu CHƯA LÀM
         if st.button("🎯 Làm lại câu chưa đúng", use_container_width=True):
-            # Lọc tất cả các chỉ số (i) mà đáp án của người dùng KHÔNG trùng với đáp án đúng
-            sai_hoac_chua_lam_idx = [
+            sai_hoac_chua_idx = [
                 i for i in range(len(st.session_state.data_thi)) 
                 if st.session_state.user_answers.get(i) != st.session_state.data_thi[i]['correct']
             ]
-            
-            if sai_hoac_chua_lam_idx:
-                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_hoac_chua_lam_idx]
+            if sai_hoac_chua_idx:
+                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_hoac_chua_idx]
                 st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
             else:
-                st.toast("Chúc mừng! Bạn đã làm đúng hết tất cả các câu.")
+                st.toast("Bạn đã làm đúng hết!")
         
         if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
@@ -122,15 +120,17 @@ if st.session_state.data_thi:
     tong = len(data); da_lam = len(st.session_state.user_answers)
     dung = sum(1 for i, ans in st.session_state.user_answers.items() if ans == data[i]['correct'])
     
-    # THỐNG KÊ MỚI: Câu sai = Tổng - Câu đúng
-    sai_tong_cong = tong - dung 
+    # Thống kê hiển thị
+    sai_da_lam = da_lam - dung
+    chua_lam = tong - da_lam
     
     col_l, col_m, col_r = st.columns([1, 2.5, 1.2])
     with col_l:
         with st.container(border=True):
             st.write("### 📊 Thống kê")
             st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
-            st.write(f"✅ Đúng: **{dung}** | ❌ Chưa đúng: **{sai_tong_cong}**")
+            st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{sai_da_lam}**")
+            st.write(f"⏳ Chưa làm: **{chua_lam}**")
             st.progress(da_lam / tong if tong > 0 else 0)
             st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
