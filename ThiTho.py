@@ -17,6 +17,7 @@ st.markdown("""
         max-width: 95% !important;
         padding-left: 1.5rem !important;
         padding-right: 1.5rem !important;
+        padding-top: 1.5rem !important;
     }
     .stApp { color: #1f1f1f; }
     .question-box { 
@@ -35,9 +36,9 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- QUẢN LÝ TRẠNG THÁI ---
-for key in ['data_thi', 'user_answers', 'current_idx', 'start_time', 'next_trigger']:
+for key in ['data_thi', 'user_answers', 'current_idx', 'next_trigger']:
     if key not in st.session_state:
-        st.session_state[key] = None if key in ['data_thi', 'start_time'] else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
+        st.session_state[key] = None if key == 'data_thi' else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
 
 # --- HÀM ĐỌC FILE ---
 def read_docx(file):
@@ -95,7 +96,7 @@ with st.sidebar:
         st.session_state.data_thi = read_docx(uploaded_file) if uploaded_file.name.endswith('.docx') else read_pdf(uploaded_file)
         if t1: random.shuffle(st.session_state.data_thi)
         if t2: [random.shuffle(it['options']) for it in st.session_state.data_thi]
-        st.session_state.start_time = time.time(); st.rerun()
+        st.rerun()
 
     if st.session_state.data_thi:
         st.markdown("---")
@@ -104,6 +105,8 @@ with st.sidebar:
             if sai_idx:
                 st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_idx]
                 st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
+            else:
+                st.toast("Bạn chưa có câu nào sai!")
         if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
 
@@ -117,31 +120,31 @@ if st.session_state.data_thi:
     col_l, col_m, col_r = st.columns([1, 2.5, 1.2])
     with col_l:
         with st.container(border=True):
-            st.write("### 📊 Kết quả")
-            if st.session_state.start_time:
-                el = int(time.time() - st.session_state.start_time)
-                st.write(f"⏱ **{el//60:02d}:{el%60:02d}**")
+            st.write("### 📊 Thống kê")
             st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
             st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{sai}**")
             st.progress(da_lam / tong if tong > 0 else 0)
-            st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
+            st.metric("🎯 Điểm hiện tại", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
     with col_m:
         item = data[idx]
         st.markdown(f'<div class="question-box"><div class="question-text">Câu {idx + 1}:</div><div>{item["question"]}</div></div>', unsafe_allow_html=True)
         answered = idx in st.session_state.user_answers
         choice = st.radio("Đáp án:", item['options'], key=f"r_{idx}", index=item['options'].index(st.session_state.user_answers[idx]) if answered else None, disabled=answered, label_visibility="collapsed")
+        
         if choice and not answered:
             st.session_state.user_answers[idx] = choice; st.session_state.next_trigger = True; st.rerun()
+        
         if answered:
             if st.session_state.user_answers[idx] == item['correct']: st.success("ĐÚNG! ✅")
-            else: st.error(f"SAI! ❌ Đáp án: {item['correct']}")
+            else: st.error(f"SAI! ❌ Đáp án đúng là: **{item['correct']}**")
+        
         c1, c2 = st.columns(2)
-        if c1.button("⬅ Trước", use_container_width=True): st.session_state.current_idx = max(0, idx - 1); st.rerun()
-        if c2.button("Sau ➡", use_container_width=True): st.session_state.current_idx = min(tong-1, idx + 1); st.rerun()
+        if c1.button("⬅ Câu trước", use_container_width=True): st.session_state.current_idx = max(0, idx - 1); st.rerun()
+        if c2.button("Câu sau ➡", use_container_width=True): st.session_state.current_idx = min(tong-1, idx + 1); st.rerun()
 
     with col_r:
-        st.write("### 📑 Mục lục")
+        st.write("### 📑 Mục lục câu hỏi")
         grid = 4
         for i in range(0, tong, grid):
             cols = st.columns(grid)
@@ -153,8 +156,10 @@ if st.session_state.data_thi:
                         lbl += " ✅" if st.session_state.user_answers[curr] == data[curr]['correct'] else " ❌"
                     if cols[j].button(lbl, key=f"m_{curr}", use_container_width=True):
                         st.session_state.current_idx = curr; st.rerun()
+    
     if st.session_state.next_trigger:
-        time.sleep(1.2); st.session_state.next_trigger = False
+        time.sleep(1.0)
+        st.session_state.next_trigger = False
         if st.session_state.current_idx < tong - 1: st.session_state.current_idx += 1; st.rerun()
 else:
-    st.info("👈 Bấm dấu > ở góc trái màn hình để mở cài đặt và nạp đề.")
+    st.info("👈 Mở thanh bên trái để tải lên file đề và bắt đầu luyện tập.")
