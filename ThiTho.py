@@ -12,7 +12,6 @@ st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state
 
 st.markdown("""
     <style>
-    /* Ép rộng màn hình để không bị cụt */
     .main .block-container {
         max-width: 95% !important;
         padding-left: 1.5rem !important;
@@ -100,13 +99,20 @@ with st.sidebar:
 
     if st.session_state.data_thi:
         st.markdown("---")
-        if st.button("🎯 Làm lại câu sai", use_container_width=True):
-            sai_idx = [i for i, ans in st.session_state.user_answers.items() if ans != st.session_state.data_thi[i]['correct']]
-            if sai_idx:
-                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_idx]
+        # LOGIC MỚI: Câu sai = Câu đã làm sai + Câu chưa làm
+        if st.button("🎯 Làm lại câu chưa đúng", use_container_width=True):
+            # Lọc tất cả các chỉ số (i) mà đáp án của người dùng KHÔNG trùng với đáp án đúng
+            sai_hoac_chua_lam_idx = [
+                i for i in range(len(st.session_state.data_thi)) 
+                if st.session_state.user_answers.get(i) != st.session_state.data_thi[i]['correct']
+            ]
+            
+            if sai_hoac_chua_lam_idx:
+                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_hoac_chua_lam_idx]
                 st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
             else:
-                st.toast("Bạn chưa có câu nào sai!")
+                st.toast("Chúc mừng! Bạn đã làm đúng hết tất cả các câu.")
+        
         if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
 
@@ -115,16 +121,18 @@ if st.session_state.data_thi:
     data = st.session_state.data_thi; idx = st.session_state.current_idx
     tong = len(data); da_lam = len(st.session_state.user_answers)
     dung = sum(1 for i, ans in st.session_state.user_answers.items() if ans == data[i]['correct'])
-    sai = da_lam - dung
+    
+    # THỐNG KÊ MỚI: Câu sai = Tổng - Câu đúng
+    sai_tong_cong = tong - dung 
     
     col_l, col_m, col_r = st.columns([1, 2.5, 1.2])
     with col_l:
         with st.container(border=True):
             st.write("### 📊 Thống kê")
             st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
-            st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{sai}**")
+            st.write(f"✅ Đúng: **{dung}** | ❌ Chưa đúng: **{sai_tong_cong}**")
             st.progress(da_lam / tong if tong > 0 else 0)
-            st.metric("🎯 Điểm hiện tại", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
+            st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
     with col_m:
         item = data[idx]
@@ -137,7 +145,7 @@ if st.session_state.data_thi:
         
         if answered:
             if st.session_state.user_answers[idx] == item['correct']: st.success("ĐÚNG! ✅")
-            else: st.error(f"SAI! ❌ Đáp án đúng là: **{item['correct']}**")
+            else: st.error(f"SAI! ❌ Đáp án đúng: **{item['correct']}**")
         
         c1, c2 = st.columns(2)
         if c1.button("⬅ Câu trước", use_container_width=True): st.session_state.current_idx = max(0, idx - 1); st.rerun()
