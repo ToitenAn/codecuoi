@@ -12,18 +12,13 @@ st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state
 
 st.markdown("""
     <style>
-    /* SỬA LỖI CỤT LỦN: Ép giao diện rộng tối đa */
+    /* Ép rộng màn hình để không bị cụt */
     .main .block-container {
         max-width: 95% !important;
-        padding-left: 2rem !important;
-        padding-right: 2rem !important;
-        padding-top: 1.5rem !important;
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
     }
-
-    /* Đảm bảo chữ luôn hiển thị rõ ràng */
     .stApp { color: #1f1f1f; }
-    
-    /* Box câu hỏi trắng, chữ đen rõ nét */
     .question-box { 
         background: #ffffff; 
         padding: 20px; 
@@ -31,24 +26,20 @@ st.markdown("""
         border: 1px solid #dee2e6; 
         margin-bottom: 20px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        min-height: 150px; /* Thêm độ cao tối thiểu để không bị hụt */
+        min-height: 150px;
     }
     .question-text { font-size: 18px !important; font-weight: 500; color: #1f1f1f; margin-bottom: 10px; }
-
-    /* Nút bấm mục lục đúng/sai */
     div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) { background-color: #28a745 !important; color: white !important; }
     div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) { background-color: #ff4b4b !important; color: white !important; }
-    
-    /* Tối ưu nút bấm to trên điện thoại */
-    @media (max-width: 768px) {
-        .main .block-container { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
-        .stButton button { height: 3.5rem !important; font-size: 16px !important; }
-        .question-text { font-size: 16px !important; }
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- HÀM ĐỌC FILE WORD ---
+# --- QUẢN LÝ TRẠNG THÁI ---
+for key in ['data_thi', 'user_answers', 'current_idx', 'start_time', 'next_trigger']:
+    if key not in st.session_state:
+        st.session_state[key] = None if key in ['data_thi', 'start_time'] else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
+
+# --- HÀM ĐỌC FILE ---
 def read_docx(file):
     doc = Document(file)
     data = []
@@ -63,18 +54,14 @@ def read_docx(file):
             is_correct = False
             if "*" in text or "--" in text: is_correct = True
             for run in para.runs:
-                if (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) or \
-                   (run.font.highlight_color == WD_COLOR_INDEX.YELLOW) or \
-                   (run.bold):
-                    is_correct = True
-                    break
+                if (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) or (run.font.highlight_color == WD_COLOR_INDEX.YELLOW) or (run.bold):
+                    is_correct = True; break
             clean_text = text.replace("*", "").replace("--", "").strip()
             if clean_text and clean_text not in current_q["options"]:
                 current_q["options"].append(clean_text)
                 if is_correct: current_q["correct"] = clean_text
     return [q for q in data if len(q['options']) >= 2]
 
-# --- HÀM ĐỌC FILE PDF ---
 def read_pdf(file):
     data = []
     current_q = None
@@ -97,85 +84,61 @@ def read_pdf(file):
                         if is_c: current_q["correct"] = t
     return [q for q in data if len(q['options']) >= 2]
 
-# --- SESSION STATE ---
-for key in ['data_thi', 'user_answers', 'current_idx', 'start_time', 'next_trigger']:
-    if key not in st.session_state:
-        st.session_state[key] = None if key in ['data_thi', 'start_time'] else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
-
-# --- SIDEBAR (DẤU >> ĐÓNG MỞ CÀI ĐẶT) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ CÀI ĐẶT")
-    st.info("Bấm mũi tên góc trên để đóng/mở thanh này.")
     uploaded_file = st.file_uploader("Tải đề (Word/PDF)", type=["docx", "pdf"])
     t1 = st.checkbox("Đảo câu hỏi")
     t2 = st.checkbox("Đảo đáp án")
-    
     if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
-        st.session_state.user_answers = {}
-        st.session_state.current_idx = 0
+        st.session_state.user_answers = {}; st.session_state.current_idx = 0
         st.session_state.data_thi = read_docx(uploaded_file) if uploaded_file.name.endswith('.docx') else read_pdf(uploaded_file)
         if t1: random.shuffle(st.session_state.data_thi)
-        if t2: 
-            for it in st.session_state.data_thi: random.shuffle(it['options'])
-        st.session_state.start_time = time.time()
-        st.rerun()
-    
+        if t2: [random.shuffle(it['options']) for it in st.session_state.data_thi]
+        st.session_state.start_time = time.time(); st.rerun()
+
     if st.session_state.data_thi:
+        st.markdown("---")
+        if st.button("🎯 Làm lại câu sai", use_container_width=True):
+            sai_idx = [i for i, ans in st.session_state.user_answers.items() if ans != st.session_state.data_thi[i]['correct']]
+            if sai_idx:
+                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_idx]
+                st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
         if st.button("🔄 Đổi đề khác", use_container_width=True):
-            st.session_state.data_thi = None
-            st.rerun()
+            st.session_state.data_thi = None; st.rerun()
 
 # --- GIAO DIỆN CHÍNH ---
 if st.session_state.data_thi:
-    data = st.session_state.data_thi
-    idx = st.session_state.current_idx
-    tong = len(data)
-    da_lam = len(st.session_state.user_answers)
+    data = st.session_state.data_thi; idx = st.session_state.current_idx
+    tong = len(data); da_lam = len(st.session_state.user_answers)
+    dung = sum(1 for i, ans in st.session_state.user_answers.items() if ans == data[i]['correct'])
+    sai = da_lam - dung
     
-    # Chia tỷ lệ cột để nội dung dàn đều, không bị cụt
     col_l, col_m, col_r = st.columns([1, 2.5, 1.2])
-    
     with col_l:
         with st.container(border=True):
             st.write("### 📊 Kết quả")
             if st.session_state.start_time:
-                elapsed = int(time.time() - st.session_state.start_time)
-                st.write(f"⏱ **{elapsed//60:02d}:{elapsed%60:02d}**")
-            dung = sum(1 for i in st.session_state.user_answers if st.session_state.user_answers[i] == data[i]['correct'])
+                el = int(time.time() - st.session_state.start_time)
+                st.write(f"⏱ **{el//60:02d}:{el%60:02d}**")
             st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
+            st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{sai}**")
             st.progress(da_lam / tong if tong > 0 else 0)
-            st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0")
+            st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
     with col_m:
         item = data[idx]
-        st.markdown(f'''
-            <div class="question-box">
-                <div class="question-text">Câu {idx + 1}:</div>
-                <div>{item["question"]}</div>
-            </div>
-        ''', unsafe_allow_html=True)
-        
+        st.markdown(f'<div class="question-box"><div class="question-text">Câu {idx + 1}:</div><div>{item["question"]}</div></div>', unsafe_allow_html=True)
         answered = idx in st.session_state.user_answers
-        choice = st.radio("Đáp án:", item['options'], key=f"r_{idx}", 
-                          index=item['options'].index(st.session_state.user_answers[idx]) if answered else None,
-                          disabled=answered, label_visibility="collapsed")
-        
+        choice = st.radio("Đáp án:", item['options'], key=f"r_{idx}", index=item['options'].index(st.session_state.user_answers[idx]) if answered else None, disabled=answered, label_visibility="collapsed")
         if choice and not answered:
-            st.session_state.user_answers[idx] = choice
-            st.session_state.next_trigger = True
-            st.rerun()
-            
+            st.session_state.user_answers[idx] = choice; st.session_state.next_trigger = True; st.rerun()
         if answered:
             if st.session_state.user_answers[idx] == item['correct']: st.success("ĐÚNG! ✅")
             else: st.error(f"SAI! ❌ Đáp án: {item['correct']}")
-        
         c1, c2 = st.columns(2)
-        if c1.button("⬅ Trước", use_container_width=True):
-            st.session_state.current_idx = max(0, idx - 1)
-            st.rerun()
-        if c2.button("Sau ➡", use_container_width=True):
-            st.session_state.current_idx = min(tong-1, idx + 1)
-            st.rerun()
+        if c1.button("⬅ Trước", use_container_width=True): st.session_state.current_idx = max(0, idx - 1); st.rerun()
+        if c2.button("Sau ➡", use_container_width=True): st.session_state.current_idx = min(tong-1, idx + 1); st.rerun()
 
     with col_r:
         st.write("### 📑 Mục lục")
@@ -189,14 +152,9 @@ if st.session_state.data_thi:
                     if curr in st.session_state.user_answers:
                         lbl += " ✅" if st.session_state.user_answers[curr] == data[curr]['correct'] else " ❌"
                     if cols[j].button(lbl, key=f"m_{curr}", use_container_width=True):
-                        st.session_state.current_idx = curr
-                        st.rerun()
-
+                        st.session_state.current_idx = curr; st.rerun()
     if st.session_state.next_trigger:
-        time.sleep(1.2)
-        st.session_state.next_trigger = False
-        if st.session_state.current_idx < tong - 1:
-            st.session_state.current_idx += 1
-            st.rerun()
+        time.sleep(1.2); st.session_state.next_trigger = False
+        if st.session_state.current_idx < tong - 1: st.session_state.current_idx += 1; st.rerun()
 else:
-    st.info("👈 Bấm dấu **>** ở góc trái màn hình để mở cài đặt và nạp đề.")
+    st.info("👈 Bấm dấu > ở góc trái màn hình để mở cài đặt và nạp đề.")
