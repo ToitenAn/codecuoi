@@ -5,37 +5,42 @@ from docx.enum.text import WD_COLOR_INDEX
 import random
 import time
 
-# --- CẤU HÌNH GIAO DIỆN ---
+# --- CẤU HÌNH GIAO DIỆN (ĐÃ BỎ BACKGROUND) ---
 st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state="expanded")
 
-# Link ảnh nền từ link bạn đã gửi trước đó
-BG_IMAGE_URL = "https://i.ibb.co/Q32JcTYJ/image.png" 
-
-st.markdown(f"""
+st.markdown("""
     <style>
-    .stApp {{
-        background-image: url("{BG_IMAGE_URL}");
-        background-attachment: fixed;
-        background-size: cover;
-        background-position: center;
-    }}
-    .question-box {{ 
-        background: rgba(255, 255, 255, 0.8) !important;
-        backdrop-filter: blur(10px);
-        padding: 20px; border-radius: 12px; 
-        border: 1px solid rgba(255, 255, 255, 0.3); margin-bottom: 20px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-    }}
-    .question-text {{ font-size: 20px !important; font-weight: 700; color: #000000; }}
-    h3, p, span, label {{ color: #000000 !important; font-weight: 600 !important; }}
+    /* Chỉnh khoảng cách lề cho gọn */
+    .main .block-container {
+        max-width: 95% !important;
+        padding-top: 2rem !important;
+    }
     
-    div[data-testid="stHorizontalBlock"] button {{
-        background: rgba(255, 255, 255, 0.6) !important;
-        color: #000 !important;
-        border: 1px solid #666 !important;
-    }}
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) {{ background-color: #28a745 !important; color: white !important; }}
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) {{ background-color: #ff4b4b !important; color: white !important; }}
+    /* Khung câu hỏi đơn giản trên nền trắng */
+    .question-box { 
+        background: #ffffff; 
+        padding: 20px; 
+        border-radius: 10px; 
+        border: 1px solid #dee2e6; 
+        margin-bottom: 20px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    .question-text { 
+        font-size: 20px !important; 
+        font-weight: 700; 
+        color: #1f1f1f; 
+    }
+    
+    /* Giữ màu sắc cho các nút trạng thái trong mục lục */
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) { 
+        background-color: #28a745 !important; 
+        color: white !important; 
+    }
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) { 
+        background-color: #ff4b4b !important; 
+        color: white !important; 
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -54,10 +59,8 @@ def read_docx(file):
         text = para.text.strip()
         if not text: continue
         
-        # KIỂM TRA ĐỊNH DẠNG ĐOẠN VĂN
-        is_bold_para = any(run.bold for run in para.runs) # Có chữ in đậm
-        
-        # 1. NHẬN DIỆN ĐỀ BÀI: Nếu chữ đậm HOẶC bắt đầu bằng "Câu"/"Số."
+        # Nhận diện đề bài: Có chữ in đậm HOẶC bắt đầu bằng "Câu"/"Số."
+        is_bold_para = any(run.bold for run in para.runs)
         is_question_header = (
             is_bold_para or 
             text.lower().startswith("câu") or 
@@ -69,19 +72,14 @@ def read_docx(file):
             data.append(current_q)
             
         elif current_q is not None:
-            # Nếu dòng này KHÔNG in đậm (là đáp án)
+            # Nếu dòng này không in đậm thì xét là đáp án
             if not is_bold_para:
                 is_correct = False
                 for run in para.runs:
-                    # Check 3 trường hợp đáp án đúng
-                    # a. Chữ màu đỏ
-                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                        is_correct = True
-                    # b. Bôi nền màu vàng
-                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                        is_correct = True
-                    # c. Có dấu * màu đỏ
-                    if "*" in run.text and run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                    # Các dấu hiệu đáp án đúng: Chữ đỏ, Bôi vàng, hoặc có dấu * màu đỏ
+                    if (run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)) or \
+                       (run.font.highlight_color == WD_COLOR_INDEX.YELLOW) or \
+                       ("*" in run.text and run.font.color and run.font.color.rgb == RGBColor(255, 0, 0)):
                         is_correct = True
                 
                 clean_text = text.replace("*", "").strip()
