@@ -2,29 +2,40 @@ import streamlit as st
 from docx import Document
 from docx.shared import RGBColor
 from docx.enum.text import WD_COLOR_INDEX
-import pdfplumber
 import random
 import time
-import re
 
 # --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown("""
+# Link ảnh nền từ link bạn đã gửi trước đó
+BG_IMAGE_URL = "https://i.ibb.co/Q32JcTYJ/image.png" 
+
+st.markdown(f"""
     <style>
-    .main .block-container {
-        max-width: 95% !important;
-        padding: 1.5rem !important;
-    }
-    .question-box { 
-        background: #ffffff; padding: 20px; border-radius: 12px; 
-        border: 1px solid #dee2e6; margin-bottom: 20px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    .question-text { font-size: 18px !important; font-weight: 500; color: #1f1f1f; }
-    /* Màu nút bấm mục lục */
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) { background-color: #28a745 !important; color: white !important; }
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) { background-color: #ff4b4b !important; color: white !important; }
+    .stApp {{
+        background-image: url("{BG_IMAGE_URL}");
+        background-attachment: fixed;
+        background-size: cover;
+        background-position: center;
+    }}
+    .question-box {{ 
+        background: rgba(255, 255, 255, 0.8) !important;
+        backdrop-filter: blur(10px);
+        padding: 20px; border-radius: 12px; 
+        border: 1px solid rgba(255, 255, 255, 0.3); margin-bottom: 20px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }}
+    .question-text {{ font-size: 20px !important; font-weight: 700; color: #000000; }}
+    h3, p, span, label {{ color: #000000 !important; font-weight: 600 !important; }}
+    
+    div[data-testid="stHorizontalBlock"] button {{
+        background: rgba(255, 255, 255, 0.6) !important;
+        color: #000 !important;
+        border: 1px solid #666 !important;
+    }}
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) {{ background-color: #28a745 !important; color: white !important; }}
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) {{ background-color: #ff4b4b !important; color: white !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -33,7 +44,7 @@ for key in ['data_thi', 'user_answers', 'current_idx', 'next_trigger']:
     if key not in st.session_state:
         st.session_state[key] = None if key == 'data_thi' else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
 
-# --- HÀM ĐỌC FILE WORD (CHỈ QUÉT 3 TRƯỜNG HỢP) ---
+# --- HÀM ĐỌC FILE WORD ---
 def read_docx(file):
     doc = Document(file)
     data = []
@@ -43,34 +54,42 @@ def read_docx(file):
         text = para.text.strip()
         if not text: continue
         
-        # Nhận diện câu hỏi (Bắt đầu bằng chữ "Câu" hoặc số kèm dấu chấm)
-        if text.lower().startswith("câu") or (text[0].isdigit() and "." in text[:5]):
+        # KIỂM TRA ĐỊNH DẠNG ĐOẠN VĂN
+        is_bold_para = any(run.bold for run in para.runs) # Có chữ in đậm
+        
+        # 1. NHẬN DIỆN ĐỀ BÀI: Nếu chữ đậm HOẶC bắt đầu bằng "Câu"/"Số."
+        is_question_header = (
+            is_bold_para or 
+            text.lower().startswith("câu") or 
+            (text[0].isdigit() and "." in text[:5])
+        )
+        
+        if is_question_header:
             current_q = {"question": text, "options": [], "correct": None}
             data.append(current_q)
+            
         elif current_q is not None:
-            is_correct = False
-            
-            # Quét từng Run (cụm chữ có định dạng riêng) trong dòng
-            for run in para.runs:
-                # 1. Chữ màu đỏ (RGB: 255, 0, 0)
-                if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                    is_correct = True
-                # 2. Bôi nền màu vàng (Highlight)
-                if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                    is_correct = True
-                # 3. Dấu * màu đỏ (Đã bao hàm ở điều kiện chữ đỏ, nhưng thêm kiểm tra text)
-                if "*" in run.text and run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                    is_correct = True
-            
-            # Xử lý text sạch
-            clean_text = text.replace("*", "").strip()
-            
-            # Loại bỏ các dòng ghi chú rác (không phải đáp án)
-            if clean_text and "phần bổ sung" not in clean_text.lower():
-                if clean_text not in current_q["options"]:
-                    current_q["options"].append(clean_text)
-                    if is_correct:
-                        current_q["correct"] = clean_text
+            # Nếu dòng này KHÔNG in đậm (là đáp án)
+            if not is_bold_para:
+                is_correct = False
+                for run in para.runs:
+                    # Check 3 trường hợp đáp án đúng
+                    # a. Chữ màu đỏ
+                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                        is_correct = True
+                    # b. Bôi nền màu vàng
+                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
+                        is_correct = True
+                    # c. Có dấu * màu đỏ
+                    if "*" in run.text and run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                        is_correct = True
+                
+                clean_text = text.replace("*", "").strip()
+                if clean_text and "phần bổ sung" not in clean_text.lower():
+                    if clean_text not in current_q["options"]:
+                        current_q["options"].append(clean_text)
+                        if is_correct:
+                            current_q["correct"] = clean_text
 
     return [q for q in data if len(q['options']) >= 2]
 
@@ -117,7 +136,6 @@ if st.session_state.data_thi:
             st.write("### 📊 Thống kê")
             st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
             st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{da_lam - dung}**")
-            st.write(f"⏳ Chưa làm: **{tong - da_lam}**")
             st.progress(da_lam / tong if tong > 0 else 0)
             st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
