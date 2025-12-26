@@ -1,35 +1,41 @@
 import streamlit as st
-from docx2python import docx2python
+from docx import Document
+from docx.shared import RGBColor
+from docx.enum.text import WD_COLOR_INDEX
 import random
 import time
-import re
-import os
 
-# --- CẤU HÌNH GIAO DIỆN (BỎ BACKGROUND) ---
+# --- CẤU HÌNH GIAO DIỆN ---
 st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state="expanded")
 
-st.markdown("""
+# Link ảnh nền từ link bạn đã gửi trước đó
+BG_IMAGE_URL = "https://i.ibb.co/Q32JcTYJ/image.png" 
+
+st.markdown(f"""
     <style>
-    .main .block-container {
-        max-width: 95% !important;
-        padding-top: 2rem !important;
-    }
-    /* Khung câu hỏi đơn giản */
-    .question-box { 
-        background-color: #f8f9fa;
-        padding: 25px; 
-        border-radius: 10px; 
-        border-left: 5px solid #007bff;
-        margin-bottom: 20px;
-    }
-    .question-text { 
-        font-size: 20px !important; 
-        font-weight: 700; 
-        color: #1f1f1f; 
-    }
-    /* Màu nút bấm mục lục */
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) { background-color: #28a745 !important; color: white !important; }
-    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) { background-color: #ff4b4b !important; color: white !important; }
+    .stApp {{
+        background-image: url("{BG_IMAGE_URL}");
+        background-attachment: fixed;
+        background-size: cover;
+        background-position: center;
+    }}
+    .question-box {{ 
+        background: rgba(255, 255, 255, 0.8) !important;
+        backdrop-filter: blur(10px);
+        padding: 20px; border-radius: 12px; 
+        border: 1px solid rgba(255, 255, 255, 0.3); margin-bottom: 20px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }}
+    .question-text {{ font-size: 20px !important; font-weight: 700; color: #000000; }}
+    h3, p, span, label {{ color: #000000 !important; font-weight: 600 !important; }}
+    
+    div[data-testid="stHorizontalBlock"] button {{
+        background: rgba(255, 255, 255, 0.6) !important;
+        color: #000 !important;
+        border: 1px solid #666 !important;
+    }}
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("✅")) {{ background-color: #28a745 !important; color: white !important; }}
+    div[data-testid="stHorizontalBlock"] button:has(span:contains("❌")) {{ background-color: #ff4b4b !important; color: white !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -38,74 +44,80 @@ for key in ['data_thi', 'user_answers', 'current_idx', 'next_trigger']:
     if key not in st.session_state:
         st.session_state[key] = None if key == 'data_thi' else ({} if key == 'user_answers' else (0 if key == 'current_idx' else False))
 
-# --- HÀM ĐỌC FILE WORD CÓ ẢNH & NHẬN DIỆN CHỮ ĐẬM ---
-def process_word_with_images(uploaded_file):
-    with open("temp.docx", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+# --- HÀM ĐỌC FILE WORD ---
+def read_docx(file):
+    doc = Document(file)
+    data = []
+    current_q = None
     
-    with docx2python("temp.docx") as doc:
-        # Lấy tất cả các dòng văn bản từ body
-        all_lines = []
-        for part in doc.body:
-            for table in part:
-                for row in table:
-                    for cell in row:
-                        for line in cell:
-                            if line.strip(): all_lines.append(line)
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text: continue
         
-        data = []
-        current_q = None
+        # KIỂM TRA ĐỊNH DẠNG ĐOẠN VĂN
+        is_bold_para = any(run.bold for run in para.runs) # Có chữ in đậm
         
-        for line in all_lines:
-            # Nhận diện Đề bài: Có thẻ <b> (in đậm) HOẶC bắt đầu bằng "Câu"
-            is_bold = "<b>" in line
-            text_clean = re.sub('<[^<]+?>', '', line).strip() 
+        # 1. NHẬN DIỆN ĐỀ BÀI: Nếu chữ đậm HOẶC bắt đầu bằng "Câu"/"Số."
+        is_question_header = (
+            is_bold_para or 
+            text.lower().startswith("câu") or 
+            (text[0].isdigit() and "." in text[:5])
+        )
+        
+        if is_question_header:
+            current_q = {"question": text, "options": [], "correct": None}
+            data.append(current_q)
             
-            # Tìm ảnh trong dòng (docx2python format: ----image1.png----)
-            img_match = re.search(r'----image(\d+)\.(png|jpg|jpeg)----', line)
-            
-            if is_bold or text_clean.lower().startswith("câu") or (text_clean and text_clean[0].isdigit() and "." in text_clean[:5]):
-                current_q = {"question": text_clean, "options": [], "correct": None, "image_data": None}
-                if img_match:
-                    img_name = f"image{img_match.group(1)}.{img_match.group(2)}"
-                    current_q["image_data"] = doc.images.get(img_name)
-                data.append(current_q)
-            
-            elif current_q is not None:
-                # Đáp án đúng: Có dấu * hoặc thẻ bôi màu (tùy định dạng docx2python)
-                is_correct = "*" in line or '<span style="background-color:yellow">' in line.lower()
+        elif current_q is not None:
+            # Nếu dòng này KHÔNG in đậm (là đáp án)
+            if not is_bold_para:
+                is_correct = False
+                for run in para.runs:
+                    # Check 3 trường hợp đáp án đúng
+                    # a. Chữ màu đỏ
+                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                        is_correct = True
+                    # b. Bôi nền màu vàng
+                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
+                        is_correct = True
+                    # c. Có dấu * màu đỏ
+                    if "*" in run.text and run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                        is_correct = True
                 
-                # Nếu dòng có ảnh mà chưa gán cho đề bài
-                if img_match and not current_q["image_data"]:
-                    img_name = f"image{img_match.group(1)}.{img_match.group(2)}"
-                    current_q["image_data"] = doc.images.get(img_name)
+                clean_text = text.replace("*", "").strip()
+                if clean_text and "phần bổ sung" not in clean_text.lower():
+                    if clean_text not in current_q["options"]:
+                        current_q["options"].append(clean_text)
+                        if is_correct:
+                            current_q["correct"] = clean_text
 
-                clean_ans = text_clean.replace("*", "").strip()
-                if clean_ans and "phần bổ sung" not in clean_ans.lower():
-                    if clean_ans not in current_q["options"]:
-                        current_q["options"].append(clean_ans)
-                        if is_correct: current_q["correct"] = clean_ans
-                    
-        return [q for q in data if len(q['options']) >= 2]
+    return [q for q in data if len(q['options']) >= 2]
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ CÀI ĐẶT")
-    file = st.file_uploader("Tải đề Word (.docx)", type=["docx"])
+    uploaded_file = st.file_uploader("Tải đề (Word)", type=["docx"])
     t1 = st.checkbox("Đảo câu hỏi")
     t2 = st.checkbox("Đảo đáp án")
     
-    if file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
-        st.session_state.data_thi = process_word_with_images(file)
+    if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
+        st.session_state.user_answers = {}
+        st.session_state.current_idx = 0
+        st.session_state.data_thi = read_docx(uploaded_file)
         if t1: random.shuffle(st.session_state.data_thi)
         if t2: 
             for it in st.session_state.data_thi: random.shuffle(it['options'])
-        st.session_state.user_answers = {}
-        st.session_state.current_idx = 0
         st.rerun()
 
     if st.session_state.data_thi:
         st.markdown("---")
+        if st.button("🎯 Làm lại câu chưa đúng", use_container_width=True):
+            sai_hoac_chua = [i for i in range(len(st.session_state.data_thi)) 
+                             if st.session_state.user_answers.get(i) != st.session_state.data_thi[i]['correct']]
+            if sai_hoac_chua:
+                st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_hoac_chua]
+                st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
+        
         if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
 
@@ -120,22 +132,21 @@ if st.session_state.data_thi:
     col_l, col_m, col_r = st.columns([1, 2.5, 1.2])
     
     with col_l:
-        st.write("### 📊 Thống kê")
-        st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
-        st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{da_lam - dung}**")
-        st.progress(da_lam / tong if tong > 0 else 0)
+        with st.container(border=True):
+            st.write("### 📊 Thống kê")
+            st.write(f"📝 Đã làm: **{da_lam}/{tong}**")
+            st.write(f"✅ Đúng: **{dung}** | ❌ Sai: **{da_lam - dung}**")
+            st.progress(da_lam / tong if tong > 0 else 0)
+            st.metric("🎯 Điểm", f"{(dung/tong)*10:.2f}" if tong > 0 else "0.00")
 
     with col_m:
         item = data[idx]
-        st.markdown(f'<div class="question-box"><div class="question-text">Câu {idx + 1}: {item["question"]}</div></div>', unsafe_allow_html=True)
-        
-        if item.get("image_data"):
-            st.image(item["image_data"], use_container_width=True)
+        st.markdown(f'<div class="question-box"><div class="question-text">Câu {idx + 1}:</div><div>{item["question"]}</div></div>', unsafe_allow_html=True)
         
         answered = idx in st.session_state.user_answers
-        choice = st.radio("Chọn đáp án:", item['options'], key=f"q_{idx}", 
+        choice = st.radio("Đáp án:", item['options'], key=f"r_{idx}", 
                           index=item['options'].index(st.session_state.user_answers[idx]) if answered else None,
-                          disabled=answered)
+                          disabled=answered, label_visibility="collapsed")
         
         if choice and not answered:
             st.session_state.user_answers[idx] = choice
@@ -143,12 +154,14 @@ if st.session_state.data_thi:
             st.rerun()
             
         if answered:
-            if st.session_state.user_answers[idx] == item['correct']: st.success("Đúng rồi! ✅")
-            else: st.error(f"Sai rồi! ❌ Đáp án đúng: {item['correct']}")
+            if st.session_state.user_answers[idx] == item['correct']: st.success("ĐÚNG! ✅")
+            else: st.error(f"SAI! ❌ Đáp án đúng: **{item['correct']}**")
         
         c1, c2 = st.columns(2)
-        if c1.button("⬅ Câu trước", use_container_width=True): st.session_state.current_idx = max(0, idx-1); st.rerun()
-        if c2.button("Câu sau ➡", use_container_width=True): st.session_state.current_idx = min(tong-1, idx+1); st.rerun()
+        if c1.button("⬅ Câu trước", use_container_width=True):
+            st.session_state.current_idx = max(0, idx - 1); st.rerun()
+        if c2.button("Câu sau ➡", use_container_width=True):
+            st.session_state.current_idx = min(tong-1, idx + 1); st.rerun()
 
     with col_r:
         st.write("### 📑 Mục lục")
@@ -165,9 +178,9 @@ if st.session_state.data_thi:
                         st.session_state.current_idx = curr; st.rerun()
 
     if st.session_state.next_trigger:
-        time.sleep(1)
+        time.sleep(1.0)
         st.session_state.next_trigger = False
         if st.session_state.current_idx < tong - 1:
             st.session_state.current_idx += 1; st.rerun()
 else:
-    st.info("👈 Hãy tải file Word lên để bắt đầu.")
+    st.info("👈 Mở thanh bên trái để nạp file Word (.docx) và bắt đầu.")
