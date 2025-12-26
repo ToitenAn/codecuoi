@@ -1,4 +1,5 @@
 streamlit
 python-docx
-docx2python
+
 pdfplumber
+
