@@ -122,7 +122,7 @@ with st.sidebar:
     st.rerun()
 
         if st.session_state.data_thi:
-        st.markdown("---")
+            st.markdown("---")
         if st.button("🎯 Làm lại câu chưa đúng", use_container_width=True):
             sai_hoac_chua = [i for i in range(len(st.session_state.data_thi)) 
                              if st.session_state.user_answers.get(i) != st.session_state.data_thi[i]['correct']]
