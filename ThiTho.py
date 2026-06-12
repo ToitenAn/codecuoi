@@ -12,6 +12,7 @@ st.set_page_config(page_title="ThiTho Pro", layout="wide")
 st.markdown("""
 <style>
 .main .block-container {max-width: 95% !important;}
+
 .question-box {
     background: #fff;
     padding: 18px;
@@ -19,15 +20,28 @@ st.markdown("""
     border: 1px solid #ddd;
     margin-bottom: 15px;
 }
-.question-text {font-size: 20px; font-weight: 700;}
+
+.question-text {
+    font-size: 20px;
+    font-weight: 700;
+}
+
 .option {
     padding: 10px;
     border-radius: 8px;
     border: 1px solid #ddd;
     margin-bottom: 6px;
 }
-.correct {background: #fff3cd; border: 2px solid #ffc107;}
-.wrong {background: #f8d7da; border: 2px solid #dc3545;}
+
+.correct {
+    background: #fff3cd;
+    border: 2px solid #ffc107;
+}
+
+.wrong {
+    background: #f8d7da;
+    border: 2px solid #dc3545;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -40,16 +54,16 @@ for k in ["data", "answers", "idx", "checked"]:
 def is_correct_para(para):
     text = para.text.strip()
 
-    # ⭐ 1. dấu *
+    # * = chắc chắn đúng
     if "*" in text:
         return True
 
-    # 🔴 2. chữ đỏ
+    # chữ đỏ
     for run in para.runs:
         if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
             return True
 
-    # 🟡 3. highlight vàng
+    # highlight vàng
     for run in para.runs:
         if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
             return True
@@ -67,6 +81,7 @@ def read_docx(file):
         if not t:
             continue
 
+        # câu hỏi
         if t.lower().startswith("câu"):
             q = {"question": t, "options": [], "correct": None}
             data.append(q)
@@ -78,7 +93,6 @@ def read_docx(file):
                 ans = f"{m.group(1)}. {m.group(2).strip().rstrip('.')}"
                 q["options"].append(ans)
 
-                # ✅ GIỮ FULL LOGIC ĐÁP ÁN ĐÚNG
                 if is_correct_para(p):
                     q["correct"] = ans
 
@@ -129,12 +143,23 @@ with st.sidebar:
 
     file = st.file_uploader("Upload đề", type=["docx", "pdf"])
 
+    shuffle_q = st.checkbox("Đảo câu hỏi")
+    shuffle_a = st.checkbox("Đảo đáp án")
+
     if st.button("🚀 START"):
         if file:
             if file.name.endswith("pdf"):
                 st.session_state.data = read_pdf(file)
             else:
                 st.session_state.data = read_docx(file)
+
+            # ===== GIỮ SHUFFLE =====
+            if shuffle_q:
+                random.shuffle(st.session_state.data)
+
+            if shuffle_a:
+                for q in st.session_state.data:
+                    random.shuffle(q["options"])
 
             st.session_state.answers = {}
             st.session_state.idx = 0
@@ -210,4 +235,4 @@ if st.session_state.data:
         st.markdown(f"<div class='option {cls}'>{opt}</div>", unsafe_allow_html=True)
 
 else:
-    st.info("Upload file DOCX / PDF để bắt đầu")
+    st.info("Upload DOCX / PDF để bắt đầu")
