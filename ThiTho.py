@@ -34,7 +34,7 @@ if "answers" not in st.session_state:
 if "idx" not in st.session_state:
     st.session_state.idx = 0
 
-# ================= PARSE DOCX =================
+# ================= DOCX =================
 def read_docx(file):
     doc = Document(file)
     data = []
@@ -56,13 +56,13 @@ def read_docx(file):
                 ans = f"{m.group(1)}. {m.group(2).strip().rstrip('.')}"
                 q["options"].append(ans)
 
-                # correct detect đơn giản
+                # detect đáp án đúng bằng *
                 if "*" in text:
                     q["correct"] = ans
 
     return [x for x in data if len(x["options"]) >= 2]
 
-# ================= PARSE PDF =================
+# ================= PDF =================
 def read_pdf(file):
     data = []
 
@@ -151,6 +151,7 @@ if st.session_state.data:
     total = len(data)
 
     done = len(st.session_state.answers)
+
     correct = sum(
         1 for k, v in st.session_state.answers.items()
         if v == data[k].get("correct")
@@ -161,7 +162,7 @@ if st.session_state.data:
     # ===== LEFT =====
     with col1:
         st.write("### 📊 Thống kê")
-        st.write(f"Đã làm: {done}/{total}")
+        st.write(f"Đã chấm: {done}/{total}")
         st.write(f"Đúng: {correct}")
         st.write(f"Sai: {done - correct}")
         st.progress(done / total if total else 0)
@@ -177,29 +178,32 @@ if st.session_state.data:
         </div>
         """, unsafe_allow_html=True)
 
-        answered = i in st.session_state.answers
-
+        # ===== CHỌN ĐÁP ÁN =====
         choice = st.radio(
             "Chọn đáp án:",
             q["options"],
             key=f"q_{i}",
-            index=q["options"].index(st.session_state.answers[i]) if answered else 0,
-            disabled=answered
+            index=q["options"].index(st.session_state.answers[i]) if i in st.session_state.answers else 0
         )
 
-        # lưu đáp án (KHÔNG rerun loop)
-        if not answered and choice:
+        # ===== NÚT CHẤM =====
+        if st.button("🎯 CHẤM CÂU NÀY"):
             st.session_state.answers[i] = choice
+            st.rerun()
 
-        # result
-        if answered:
-            if q.get("correct") is None:
-                st.warning("Chưa detect đáp án đúng")
-            elif st.session_state.answers[i] == q["correct"]:
+        # ===== KẾT QUẢ =====
+        if i in st.session_state.answers:
+            user = st.session_state.answers[i]
+            correct_ans = q.get("correct")
+
+            if correct_ans is None:
+                st.warning("⚠️ Chưa detect đáp án đúng")
+            elif user == correct_ans:
                 st.success("ĐÚNG ✅")
             else:
-                st.error(f"SAI ❌ | Đáp án: {q['correct']}")
+                st.error(f"SAI ❌ | Đáp án đúng: {correct_ans}")
 
+        # ===== NAV =====
         c1, c2 = st.columns(2)
 
         if c1.button("⬅ Trước"):
@@ -228,4 +232,4 @@ if st.session_state.data:
                 st.rerun()
 
 else:
-    st.info("Upload file DOCX / PDF để bắt đầu")
+    st.info("👈 Upload DOCX / PDF để bắt đầu")
