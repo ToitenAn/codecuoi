@@ -36,134 +36,134 @@ for key in ["data_thi", "user_answers", "current_idx", "file_docx_clean", "next_
     if key not in st.session_state:
         st.session_state[key] = None if key in ["data_thi", "file_docx_clean"] else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
-# ================= SIÊU BỘ LỌC TẬNG GỐC VĂN BẢN =================
-def super_clean_raw_text(text):
-    """
-    Thuật toán tối cao: Xóa sạch watermark chèn giữa từ TRƯỚC KHI xử lý cấu trúc
-    """
-    if not text:
-        return ""
-        
-    # 1. Triệt tiêu từ EduQuiz dính ở mọi dạng (kể cả đứng xen giữa các chữ cái)
-    text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', text)
-    
-    # 2. Xóa các header/footer cố định của trang PDF
-    text = re.sub(r'(?i)--- PAGE \d+ ---', '', text)
-    text = re.sub(r'(?i)TIN\s*3\s*-\s*HUBT\s*2026', '', text)
-    text = re.sub(r'Số trang:\s*\d+\s*Số câu hỏi:\s*\d+', '', text)
-    text = re.sub(r'PHẦN\s*\d+:\s*[A-Z\s\(\)0-9\-]+', '', text)
-    
-    # 3. Lọc bỏ các ký tự đơn lẻ gây nhiễu đứng một mình trên dòng
-    lines = text.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        line_strip = line.strip()
-        if line_strip in ['Z', 'z', 'D', 'Về côn']:
-            continue
-        cleaned_lines.append(line)
-        
-    return "\n".join(cleaned_lines)
-
+# ================= HÀM LỌC GIẢI THÍCH (VỆT XANH LÁ) =================
 def check_is_explanation(line_text):
-    """Nhận diện các dòng giải thích (vệt xanh lá) để bỏ qua"""
+    """Nhận diện các dòng giải thích để loại bỏ hoàn toàn"""
     txt = line_text.lower().strip()
     keywords = [
         "trong excel", "giải thích", "để di chuyển", "cấu trúc của", 
         "đáp án đúng", "hướng dẫn", "trong thiết kế", "công cụ số",
-        "khi thiết kế", "địa chỉ tuyệt đối", "phần mềm access"
+        "khi thiết kế", "địa chỉ tuyệt đối", "phần mềm access", "về côn"
     ]
     return any(kw in txt for kw in keywords)
 
-# ================= XỬ LÝ ĐỌC FILE WORD (.DOCX) =================
+# ================= XỬ LÝ ĐỌC FILE WORD (.DOCX) SẠCH =================
 def process_docx_clean(file_bytes):
     doc = Document(io.BytesIO(file_bytes))
-    full_raw = "\n".join([para.text for para in doc.paragraphs])
-    
-    # Làm sạch tận gốc text thô
-    clean_text = super_clean_raw_text(full_raw)
-    
     data = []
-    blocks = re.split(r'(?=Câu\s*\d+[:\.])', clean_text)
+    current_q = None
+
+    for para in doc.paragraphs:
+        # Xóa triệt để các biến thể chữ watermark nếu có trong docx
+        text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', para.text).strip()
+        # Loại bỏ các ký tự đơn lẻ gây nhiễu đứng một mình
+        if not text or text in ['Z', 'z', 'D']:
+            continue
+
+        if text.lower().startswith("câu"):
+            current_q = {"question": text, "options": [], "correct": None}
+            data.append(current_q)
+            continue
+
+        if check_is_explanation(text):
+            continue
+
+        if current_q is not None:
+            matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', text)
+            if matches:
+                for m in matches:
+                    m_clean = m.strip()
+                    is_correct = m_clean.startswith("*")
+                    opt_text = m_clean.replace("*", "").strip()
+                    
+                    if len(current_q["options"]) < 4:
+                        current_q["options"].append(opt_text)
+                        if is_correct: current_q["correct"] = opt_text
+
+    return [q for q in data if len(q["options"]) >= 2]
+
+# ================= XỬ LÝ ĐỌC FILE PDF SẠCH (THUẬT TOÁN LAYER) =================
+def process_pdf_clean(file_bytes):
+    data = []
     
+    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+        full_text = ""
+        for page in pdf.pages:
+            # Thuật toán lọc Layer: Chỉ lấy những chữ KHÔNG phải là watermark chìm dựa trên cỡ chữ chuẩn
+            page_chars = page.chars
+            if not page_chars: continue
+            
+            # Thống kê cỡ chữ phổ biến nhất trên trang (cỡ chữ của câu hỏi và đáp án)
+            sizes = [round(c["size"], 1) for c in page_chars]
+            if not sizes: continue
+            common_size = max(set(sizes), key=sizes.count)
+            
+            # Trích xuất văn bản nhưng loại bỏ các ký tự có size bất thường (quá to như EduQuiz chéo trang)
+            filtered_text = ""
+            # Trích xuất text theo dòng chuẩn của trang
+            lines_dict = {}
+            for c in page_chars:
+                # Nếu cỡ chữ quá lớn (> 15) hoặc quá nhỏ thì bỏ qua (Watermark của EduQuiz thường có size rất lớn)
+                if c["size"] > 16: 
+                    continue
+                
+                # Gom các chữ cùng một dòng (tọa độ top gần nhau)
+                top = round(c["top"], 1)
+                found_line = False
+                for t in lines_dict:
+                    if abs(t - top) < 3:
+                        lines_dict[t].append(c)
+                        found_line = True
+                        break
+                if not found_line:
+                    lines_dict[top] = [c]
+            
+            # Sắp xếp các dòng từ trên xuống dưới và gộp chữ
+            for t in sorted(lines_dict.keys()):
+                line_chars = sorted(lines_dict[t], key=lambda x: x["x0"])
+                line_str = "".join([c["text"] for c in line_chars])
+                filtered_text += line_str + "\n"
+                
+            full_text += filtered_text + "\n"
+
+    # Gột sạch thêm một lần nữa các từ khóa tiêu đề trang lặp lại
+    full_text = re.sub(r'(?i)--- PAGE \d+ ---|TIN\s*3\s*-\s*HUBT\s*2026', '', full_text)
+    full_text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', full_text)
+    
+    # Tiến hành cắt khối câu hỏi
+    blocks = re.split(r'(?=Câu\s*\d+[:\.])', full_text)
+
     for block in blocks:
         lines = [x.strip() for x in block.split("\n") if x.strip()]
         if not lines: continue
-        
+
         question = lines[0]
         if not question.lower().startswith("câu"): continue
-        
+
         filtered_lines = []
         for line in lines[1:]:
-            if check_is_explanation(line) or line.startswith("[Image"):
+            if check_is_explanation(line) or line.startswith("[Image") or line in ['Z', 'z', 'D']:
                 continue
             filtered_lines.append(line)
             
         block_text = " ".join(filtered_lines)
         matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
-        
+
         options = []
         correct = None
+
         for m in matches:
             m_clean = m.strip()
             is_correct = m_clean.startswith("*")
             clean_opt = m_clean.replace("*", "").strip()
-            
+
             if len(options) < 4:
                 options.append(clean_opt)
                 if is_correct: correct = clean_opt
-                
-        if len(options) >= 2:
-            data.append({"question": question, "options": options, "correct": correct})
-            
-    return data
-
-# ================= XỬ LÝ ĐỌC FILE PDF =================
-def process_pdf_clean(file_bytes):
-    data = []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        raw_text = ""
-        for page in pdf.pages:
-            raw_text += (page.extract_text() or "") + "\n"
-    
-    # Ép văn bản thô qua bộ lọc tối cao xóa sạch EduQuiz trước
-    clean_text = super_clean_raw_text(raw_text)
-    
-    # Cắt khối sau khi văn bản đã chuẩn tiếng Việt 100%
-    blocks = re.split(r'(?=Câu\s*\d+[:\.])', clean_text)
-
-    for block in blocks:
-        lines = [x.strip() for x in block.split("\n") if x.strip()]
-        if not lines: 
-            continue
-
-        question = lines[0]
-        if not question.lower().startswith("câu"): 
-            continue
-
-        filtered_lines = []
-        for line in lines[1:]:
-            if check_is_explanation(line) or line.startswith("[Image"):
-                continue
-            filtered_lines.append(line)
-            
-        block_text = " ".join(filtered_lines)
-        matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
-
-        options = []
-        correct = None
-
-        for m in matches:
-            m_clean = m.strip()
-            is_correct = m_clean.startswith("*")
-            clean_opt = m_clean.replace("*", "").strip()
-
-            if len(options) < 4:
-                options.append(clean_opt)
-                if is_correct:
-                    correct = clean_opt
 
         if len(options) >= 2:
             data.append({"question": question, "options": options, "correct": correct})
+            
     return data
 
 # ================= HÀM XUẤT FILE WORD (.DOCX) SẠCH =================
@@ -181,13 +181,10 @@ def export_to_docx(data_list):
         for opt in item["options"]:
             p_o = doc.add_paragraph()
             p_o.paragraph_format.left_indent = Pt(20)
-            is_correct = (opt == item["correct"])
-
-            if is_correct:
+            if opt == item["correct"]:
                 run_star = p_o.add_run("* ")
                 run_star.font.color.rgb = RGBColor(255, 0, 0)
                 run_star.bold = True
-                
                 run_txt = p_o.add_run(opt)
                 run_txt.font.color.rgb = RGBColor(255, 0, 0)
                 run_txt.bold = True
@@ -207,7 +204,7 @@ with st.sidebar:
 
     if st.button("🚀 BẮT ĐẦU TRẮC NGHIỆM", use_container_width=True, type="primary"):
         if uploaded_file is not None:
-            with st.spinner("Đang thực hiện giải mã văn bản và quét sạch Watermark..."):
+            with st.spinner("Đang bóc tách nâng cao tách biệt Layer Watermark ẩn..."):
                 file_bytes = uploaded_file.read()
                 
                 if uploaded_file.name.lower().endswith(".pdf"):
@@ -217,7 +214,6 @@ with st.sidebar:
                 
                 if parsed_data:
                     st.session_state.file_docx_clean = export_to_docx(parsed_data)
-                    
                     if shuffle_q: random.shuffle(parsed_data)
                     if shuffle_a:
                         for q in parsed_data: random.shuffle(q["options"])
@@ -228,7 +224,7 @@ with st.sidebar:
                     st.session_state.next_trigger = False
                     st.rerun()
                 else:
-                    st.error("❌ Không thể phân tích cấu trúc, file không đúng định dạng trắc nghiệm!")
+                    st.error("❌ Không thể phân tích cấu trúc, kiểm tra lại file!")
 
     if st.session_state.data_thi:
         st.markdown("---")
@@ -256,7 +252,6 @@ if st.session_state.data_thi:
 
     col1, col2, col3 = st.columns([1, 2.5, 1.2])
 
-    # ===== CỘT TRÁI: THỐNG KÊ =====
     with col1:
         st.write("### 📊 Tiến độ")
         done = len(st.session_state.user_answers)
@@ -265,7 +260,6 @@ if st.session_state.data_thi:
         st.write(f"Đúng: {correct_count} | Sai: {done - correct_count}")
         st.progress(done / total if total else 0)
 
-    # ===== CỘT GIỮA: NỘI DUNG CÂU HỎI =====
     with col2:
         st.markdown(f"""
         <div class="question-box">
@@ -276,7 +270,6 @@ if st.session_state.data_thi:
 
         answered = idx in st.session_state.user_answers
         correct_ans = item.get("correct")
-
         selected_index = item["options"].index(st.session_state.user_answers[idx]) if answered else None
 
         choice = st.radio("Chọn đáp án:", item["options"], key=f"q_{idx}", index=selected_index, disabled=answered)
@@ -302,7 +295,6 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 
-    # ===== CỘT PHẢI: MỤC LỤC =====
     with col3:
         st.write("### 📑 Mục lục")
         for i in range(0, total, 4):
@@ -318,7 +310,6 @@ if st.session_state.data_thi:
                         st.session_state.current_idx = k
                         st.rerun()
 
-    # ===== TỰ ĐỘNG CHUYỂN CÂU HỎI (AUTO NEXT) =====
     if st.session_state.next_trigger:
         time.sleep(0.5)
         st.session_state.next_trigger = False
@@ -326,4 +317,4 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 else:
-    st.info("👈 Vui lòng kéo thả file bộ đề vào thanh sidebar để chạy giải mã tự động!")
+    st.info("👈 Vui lòng tải lên file để hệ thống tự động bóc tách sạch sẽ dữ liệu lỗi!")
