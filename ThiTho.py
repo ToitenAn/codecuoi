@@ -36,7 +36,7 @@ for key in ["data_thi", "user_answers", "current_idx", "file_docx_clean", "next_
     if key not in st.session_state:
         st.session_state[key] = None if key in ["data_thi", "file_docx_clean"] else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
-# ================= BỘ LỌC KHỬ CÁC DÒNG GIẢI THÍCH =================
+# ================= HÀM LỌC BỎ CÁC DÒNG GIẢI THÍCH =================
 def check_is_explanation(line_text):
     """Nhận diện các dòng giải thích để loại bỏ hoàn toàn"""
     txt = line_text.lower().strip()
@@ -48,72 +48,77 @@ def check_is_explanation(line_text):
     ]
     return any(kw in txt for kw in keywords)
 
-# ================= THUẬT TOÁN ĐỊNH DẠNG: ĐÁP ÁN MỖI CÁI 1 DÒNG =================
-def parse_raw_paragraphs_to_data(paragraphs_list):
+# ================= THUẬT TOÁN ÉP ĐÁP ÁN XUỐNG DÒNG TUYỆT ĐỐI =================
+def parse_raw_text_to_data(raw_text):
     """
-    Xử lý danh sách các dòng text sạch (đã loại bỏ khung) thành cấu trúc câu hỏi trắc nghiệm
+    Thuật toán cắt chuỗi thông minh bằng cách ép các ký tự đáp án A, B, C, D 
+    phải tách rời hoàn toàn và đứng ở các dòng riêng biệt.
     """
+    # 1. Dọn sạch rác watermark và tiêu đề lặp lại
+    raw_text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', raw_text)
+    raw_text = re.sub(r'\b(E|DU|IZ|QUIZ|EDUQUIZ|UQ|ED)\b', '', raw_text)
+    raw_text = re.sub(r'(?i)--- PAGE \d+ ---|TIN\s*3\s*-\s*HUBT\s*2026', '', raw_text)
+    raw_text = re.sub(r'Số trang:\s*\d+\s*Số câu hỏi:\s*\d+', '', raw_text)
+    raw_text = re.sub(r'PHẦN\s*\d+:\s*[A-Z\s\(\)0-9\-]+', '', raw_text)
+    
+    # 2. Thay thế tất cả khoảng trống lớn (như phím Tab) thành dấu xuống dòng trước chữ A. B. C. D.
+    # Nhờ vậy các đáp án nằm ngang sẽ tự động bị bẻ dọc xuống thành từng dòng đơn lẻ
+    raw_text = re.sub(r'\s+(\*?\s*A\s*[\.\:])', r'\n\1', raw_text)
+    raw_text = re.sub(r'\s+(\*?\s*B\s*[\.\:])', r'\n\1', raw_text)
+    raw_text = re.sub(r'\s+(\*?\s*C\s*[\.\:])', r'\n\1', raw_text)
+    raw_text = re.sub(r'\s+(\*?\s*D\s*[\.\:])', r'\n\1', raw_text)
+
+    lines = raw_text.split('\n')
     final_data = []
     current_q = None
 
-    for text in paragraphs_list:
-        # Xóa sạch các vệt watermark rác lọt ra ngoài (nếu có)
-        text_clean = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', text).strip()
-        text_clean = re.sub(r'\b(E|DU|IZ|QUIZ|EDUQUIZ|UQ|ED)\b', '', text_clean)
-        text_clean = re.sub(r'(?i)--- PAGE \d+ ---|TIN\s*3\s*-\s*HUBT\s*2026', '', text_clean)
-        
-        if not text_clean or text_clean in ['Z', 'z', 'D', '[Image']:
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean or line_clean in ['Z', 'z', 'D', '[Image']: 
             continue
-        if check_is_explanation(text_clean):
+        if check_is_explanation(line_clean): 
             continue
 
-        # Phát hiện Câu hỏi mới
-        if text_clean.lower().startswith("câu"):
-            current_q = {"question": text_clean, "options": [], "correct": None}
+        # Phát hiện Bắt đầu một câu hỏi mới
+        if line_clean.lower().startswith("câu"):
+            current_q = {"question": line_clean, "options": [], "correct": None}
             final_data.append(current_q)
             continue
 
-        # Tách đáp án và bắt ép xuống dòng riêng biệt
-        if current_q is not None:
-            # Tìm kiếm các cụm đáp án A., B., C., D. (có hoặc không có dấu ngôi sao * chỉ đáp án đúng)
-            matches = re.findall(r'(\*?\s*[A-D]\s*\.\s*.*?)(?=\s*\*?\s*[A-D]\s*\\.|$)', text_clean)
+        # Kiểm tra xem dòng này có phải là một đáp án đơn lẻ hay không
+        opt_match = re.match(r'^(\*?)\s*([A-D])\s*[\.\:]\s*(.*)$', line_clean)
+        if opt_match and current_q is not None:
+            is_correct = bool(opt_match.group(1))
+            opt_letter = opt_match.group(2)
+            opt_text = opt_match.group(3).strip()
             
-            if matches:
-                for m in matches:
-                    m_str = m.strip()
-                    is_correct = m_str.startswith("*")
-                    opt_clean = m_str.replace("*", "").strip()
-                    # Định dạng lại chuẩn "A. Nội dung"
-                    opt_clean = re.sub(r'^([A-D])\s*\.\s*', r'\1. ', opt_clean)
-                    
-                    if len(current_q["options"]) < 4:
-                        current_q["options"].append(opt_clean)
-                        if is_correct:
-                            current_q["correct"] = opt_clean
-            else:
-                # Nếu dòng này không chứa đáp án -> Nó là phần chữ nối tiếp của câu hỏi
-                if not current_q["options"]:
-                    current_q["question"] += " " + text_clean
+            full_opt_str = f"{opt_letter}. {opt_text}"
+            
+            if len(current_q["options"]) < 4:
+                current_q["options"].append(full_opt_str)
+                if is_correct:
+                    current_q["correct"] = full_opt_str
+        else:
+            # Nếu không phải đáp án mà là văn bản thường, bổ sung vào phần nội dung câu hỏi
+            if current_q is not None and not current_q["options"]:
+                current_q["question"] += " " + line_clean
 
-    # Trả về danh sách bộ đề hợp lệ
+    # Trả về bộ đề sạch đã lọc
     return [q for q in final_data if len(q["options"]) >= 2]
 
-# ================= ĐỌC FILE WORD (.DOCX) - CHIẾN THUẬT KHÔNG LẤY CHỮ TRONG KHUNG =================
+# ================= ĐỌC FILE WORD (.DOCX) SẠCH KHÔNG KHUNG =================
 def process_docx_clean(file_bytes):
     doc = Document(io.BytesIO(file_bytes))
-    
-    # CHIẾN THUẬT CHỐT: Chỉ lấy text của paragraph chính thống ở ngoài.
-    # Thư viện python-docx mặc định `doc.paragraphs` sẽ KHÔNG lấy văn bản nằm trong Text Box (Inline Shapes) 
-    # và cũng KHÔNG lấy văn bản nằm trong Table (doc.tables). 
-    # Do đó, chỉ cần lấy trực tiếp para.text là loại bỏ hoàn toàn chữ trong khung!
-    valid_lines = []
+    # Gom toàn bộ paragraph chính quy (loại bỏ chữ trong Khung/Bảng ẩn)
+    paragraphs_text = []
     for para in doc.paragraphs:
         if para.text.strip():
-            valid_lines.append(para.text.strip())
+            paragraphs_text.append(para.text.strip())
             
-    return parse_raw_paragraphs_to_data(valid_lines)
+    full_raw_text = "\n".join(paragraphs_text)
+    return parse_raw_text_to_data(full_raw_text)
 
-# ================= ĐỌC FILE PDF SẠCH =================
+# ================= ĐỌC FILE PDF NÂNG CAO =================
 def process_pdf_clean(file_bytes):
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         full_raw = ""
@@ -123,7 +128,6 @@ def process_pdf_clean(file_bytes):
             
             lines_dict = {}
             for c in page_chars:
-                # Lọc theo kích thước: Chữ in chìm EduQuiz trong khung thường có size > 15
                 if c["size"] > 15: continue
                 top = round(c["top"], 1)
                 found_line = False
@@ -139,9 +143,9 @@ def process_pdf_clean(file_bytes):
                 line_chars = sorted(lines_dict[t], key=lambda x: x["x0"])
                 full_raw += "".join([c["text"] for c in line_chars]) + "\n"
                 
-    return parse_raw_paragraphs_to_data(full_raw.split('\n'))
+    return parse_raw_text_to_data(full_raw)
 
-# ================= HÀM XUẤT FILE WORD CHUẨN: MỖI ĐÁP ÁN 1 DÒNG =================
+# ================= HÀM XUẤT FILE WORD CHUẨN ĐẸP TUYỆT ĐỐI =================
 def export_to_docx(data_list):
     doc = Document()
     style = doc.styles['Normal']
@@ -154,7 +158,7 @@ def export_to_docx(data_list):
         q_clean = item['question'].split(':', 1)[-1].strip() if ':' in item['question'] else item['question']
         p_q.add_run(f"Câu {idx}: {q_clean}").bold = True
 
-        # Ghi mỗi đáp án riêng biệt trên 1 dòng
+        # Bảo đảm ghi mỗi đáp án trên một paragraph độc lập (bắt buộc xuống dòng)
         for opt in item["options"]:
             p_o = doc.add_paragraph()
             p_o.paragraph_format.left_indent = Pt(20)
@@ -182,7 +186,7 @@ with st.sidebar:
 
     if st.button("🚀 BẮT ĐẦU TRẮC NGHIỆM", use_container_width=True, type="primary"):
         if uploaded_file is not None:
-            with st.spinner("Đang áp dụng thuật toán cô lập Khung và xuất đề sạch..."):
+            with st.spinner("Đang xé nhỏ dòng, bẻ dọc đáp án sang từng dòng độc lập..."):
                 file_bytes = uploaded_file.read()
                 
                 if uploaded_file.name.lower().endswith(".pdf"):
@@ -202,14 +206,14 @@ with st.sidebar:
                     st.session_state.next_trigger = False
                     st.rerun()
                 else:
-                    st.error("❌ File trống hoặc cấu trúc bị lỗi ẩn!")
+                    st.error("❌ Không tìm thấy dữ liệu trắc nghiệm hợp lệ!")
 
     if st.session_state.data_thi:
         st.markdown("---")
         st.download_button(
-            label="📥 TẢI FILE WORD MỖI ĐÁP ÁN 1 DÒNG (.DOCX)",
+            label="📥 TẢI FILE WORD ĐÁP ÁN XUỐNG DÒNG (.DOCX)",
             data=st.session_state.file_docx_clean,
-            file_name="De_Thi_HUBT_Moi_Dap_An_1_Dong.docx",
+            file_name="De_Thi_HUBT_Chuan_Dong.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             use_container_width=True
         )
@@ -250,6 +254,7 @@ if st.session_state.data_thi:
         correct_ans = item.get("correct")
         selected_index = item["options"].index(st.session_state.user_answers[idx]) if answered else None
 
+        # Hiển thị đáp án trên giao diện Streamlit (Mỗi cái một dòng chuẩn chỉ)
         choice = st.radio("Chọn đáp án:", item["options"], key=f"q_{idx}", index=selected_index, disabled=answered)
 
         if choice and not answered:
@@ -295,4 +300,4 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 else:
-    st.info("👈 Hãy tải file bộ đề của ông lên để test thuật toán loại bỏ Khung ẩn mới nhé!")
+    st.info("👈 Nạp lại file word lên thanh bên để tận hưởng giao diện mỗi đáp án một dòng đi ông ơi!")
