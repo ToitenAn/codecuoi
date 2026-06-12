@@ -4,6 +4,8 @@ from docx.shared import RGBColor
 from docx.enum.text import WD_COLOR_INDEX
 import random
 import time
+import pdfplumber
+import re
 
 # --- CẤU HÌNH GIAO DIỆN (ĐÃ BỎ BACKGROUND) ---
 st.set_page_config(page_title="ThiTho Pro", layout="wide", initial_sidebar_state="expanded")
@@ -94,14 +96,20 @@ def read_docx(file):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ CÀI ĐẶT")
-    uploaded_file = st.file_uploader("Tải đề (Word)", type=["docx"])
+uploaded_file = st.file_uploader(
+    "Tải đề",
+    type=["docx", "pdf"]
+)
     t1 = st.checkbox("Đảo câu hỏi")
     t2 = st.checkbox("Đảo đáp án")
     
     if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
         st.session_state.user_answers = {}
         st.session_state.current_idx = 0
-        st.session_state.data_thi = read_docx(uploaded_file)
+        if uploaded_file.name.lower().endswith(".pdf"):
+        st.session_state.data_thi = read_pdf(uploaded_file)
+else:
+    st.session_state.data_thi = read_docx(uploaded_file)
         if t1: random.shuffle(st.session_state.data_thi)
         if t2: 
             for it in st.session_state.data_thi: random.shuffle(it['options'])
@@ -119,6 +127,52 @@ with st.sidebar:
         if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
 
+def read_pdf(file):
+    data = []
+
+    with pdfplumber.open(file) as pdf:
+        text = "\n".join(
+            page.extract_text() or ""
+            for page in pdf.pages
+        )
+
+    blocks = re.split(r'(?=Câu\s+\d+:)', text)
+
+    for block in blocks:
+        block = block.strip()
+
+        if not block.startswith("Câu"):
+            continue
+
+        lines = [x.strip() for x in block.split("\n") if x.strip()]
+
+        question = lines[0]
+
+        options = []
+        correct = None
+
+        for line in lines:
+
+            m = re.match(r'^\*\s*([A-D])[\.\)]\s*(.+)', line)
+            if m:
+                answer = f"{m.group(1)}. {m.group(2)}"
+                options.append(answer)
+                correct = answer
+                continue
+
+            m = re.match(r'^([A-D])[\.\)]\s*(.+)', line)
+            if m:
+                answer = f"{m.group(1)}. {m.group(2)}"
+                options.append(answer)
+
+        if len(options) >= 2:
+            data.append({
+                "question": question,
+                "options": options,
+                "correct": correct
+            })
+
+    return data
 # --- GIAO DIỆN CHÍNH ---
 if st.session_state.data_thi:
     data = st.session_state.data_thi
