@@ -108,14 +108,14 @@ with st.sidebar:
         st.session_state.current_idx = 0
         if uploaded_file.name.lower().endswith(".pdf"):
         st.session_state.data_thi = read_pdf(uploaded_file)
-else:
-    st.session_state.data_thi = read_docx(uploaded_file)
+        else:
+        st.session_state.data_thi = read_docx(uploaded_file)
         if t1: random.shuffle(st.session_state.data_thi)
         if t2: 
             for it in st.session_state.data_thi: random.shuffle(it['options'])
         st.rerun()
 
-    if st.session_state.data_thi:
+        if st.session_state.data_thi:
         st.markdown("---")
         if st.button("🎯 Làm lại câu chưa đúng", use_container_width=True):
             sai_hoac_chua = [i for i in range(len(st.session_state.data_thi)) 
@@ -124,7 +124,7 @@ else:
                 st.session_state.data_thi = [st.session_state.data_thi[i] for i in sai_hoac_chua]
                 st.session_state.user_answers = {}; st.session_state.current_idx = 0; st.rerun()
         
-        if st.button("🔄 Đổi đề khác", use_container_width=True):
+            if st.button("🔄 Đổi đề khác", use_container_width=True):
             st.session_state.data_thi = None; st.rerun()
 
 def read_pdf(file):
