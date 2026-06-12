@@ -103,7 +103,7 @@ with st.sidebar:
     t1 = st.checkbox("Đảo câu hỏi")
     t2 = st.checkbox("Đảo đáp án")
     
-        if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
+    if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
         st.session_state.user_answers = {}
         st.session_state.current_idx = 0
         if uploaded_file.name.lower().endswith(".pdf"):
