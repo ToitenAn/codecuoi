@@ -5,6 +5,7 @@ from docx.enum.text import WD_COLOR_INDEX
 import pdfplumber
 import random
 import re
+import io
 import time
 
 # ================= UI =================
@@ -42,15 +43,36 @@ for key in ["data_thi", "user_answers", "current_idx", "next_trigger"]:
     if key not in st.session_state:
         st.session_state[key] = None if key == "data_thi" else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
+# ================= HÀM BỔ TRỢ NHẬN DIỆN NỀN XANH LÁ =================
+def is_explanation_green(text):
+    """
+    Nhận diện dòng giải thích dựa trên từ khóa nội dung (để bọc lót cho phần nền xanh)
+    """
+    txt = text.lower().strip()
+    keywords = [
+        "trong excel", "giải thích", "để di chuyển", "cấu trúc của", 
+        "đại chỉ tuyệt đối", "hướng dẫn", "trong thiết kế", "công cụ số",
+        "khi thiết kế", "địa chỉ ô", "mặc định", "hàm count", "hàm sum", 
+        "phần page", "phần report", "về côn", "đáp án đúng"
+    ]
+    return any(kw in txt for kw in keywords) or txt in ['z', 'd', '[image']
+
 # ================= DOCX =================
 def read_docx(file):
     doc = Document(file)
     data = []
     current_q = None
 
+    # CHIẾN THUẬT 1: python-docx mặc định khi duyệt `doc.paragraphs` sẽ 
+    # TỰ ĐỘNG BỎ QUA toàn bộ chữ nằm trong Khung (Text Box/Shapes) và Bảng (Tables).
+    # Do đó ta chỉ xử lý text thô chính quy xuất hiện ở ngoài.
     for para in doc.paragraphs:
         text = para.text.strip()
         if not text:
+            continue
+
+        # Cập nhật yêu cầu 2: Bỏ qua chữ nền xanh (dòng giải thích)
+        if is_explanation_green(text):
             continue
 
         # NHẬN DIỆN CÂU HỎI
@@ -63,41 +85,43 @@ def read_docx(file):
             data.append(current_q)
             continue
 
-        # LỌC BỎ DÒNG GIẢI THÍCH (Không đưa vào đề)
-        if text.lower().startswith("trong excel") or text.lower().startswith("giải thích") or text.lower().startswith("đáp án"):
-            continue
-
-        # NHẬN DIỆN ĐÁP ÁN (Hỗ trợ cả việc ABCD dính trên cùng 1 dòng)
+        # NHẬN DIỆN ĐÁP ÁN (Ép bẻ dọc các đáp án dính chung một hàng)
         if current_q is not None:
-            # Tìm tất cả các cụm dạng A. ..., B. ..., C. ..., D. ... có hoặc không có dấu *
-            matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', text)
+            # Thuật toán xé nhỏ dòng: Tìm các cụm A. B. C. D. độc lập
+            # Sửa đổi Regex để bẻ gãy dấu Tab hoặc khoảng trắng lớn ngăn cách giữa các đáp án nằm ngang
+            text_split = re.sub(r'\s+(\*?\s*[A-D]\s*[\.\:])', r'\n\1', text)
+            lines = text_split.split('\n')
             
-            if matches:
-                for m in matches:
-                    m_clean = m.strip()
-                    
-                    # Kiểm tra dấu * trực tiếp từ Text
-                    is_correct = m_clean.startswith("*")
-                    
-                    # Loại bỏ dấu định dạng * để lấy text sạch
-                    opt_text = m_clean.replace("*", "").strip()
-                    
-                    # Kiểm tra chữ đỏ hoặc bôi vàng từ các Runs trong đoạn
-                    for run in para.runs:
-                        if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                            # Nếu đoạn text của run này trùng với đáp án hiện tại
-                            if opt_text[3:] in run.text: 
-                                is_correct = True
-                        if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                            if opt_text[3:] in run.text:
-                                is_correct = True
+            for line in lines:
+                line_clean = line.strip()
+                if not line_clean: continue
+                
+                matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', line_clean)
+                
+                if matches:
+                    for m in matches:
+                        m_clean = m.strip()
+                        is_correct = m_clean.startswith("*")
+                        opt_text = m_clean.replace("*", "").strip()
+                        
+                        # Kiểm tra chữ đỏ hoặc bôi vàng từ các Runs trong đoạn
+                        for run in para.runs:
+                            if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                                if opt_text[3:] in run.text: 
+                                    is_correct = True
+                            if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
+                                if opt_text[3:] in run.text:
+                                    is_correct = True
 
-                    if len(current_q["options"]) < 4:  # Đảm bảo chỉ lấy tối đa 4 đáp án A-B-C-D
-                        current_q["options"].append(opt_text)
-                        if is_correct:
-                            current_q["correct"] = opt_text
+                        if len(current_q["options"]) < 4: 
+                            current_q["options"].append(opt_text)
+                            if is_correct:
+                                current_q["correct"] = opt_text
+                else:
+                    # Nếu không phải đáp án mà là văn bản thường kéo dài của câu hỏi
+                    if not current_q["options"] and not line_clean.lower().startswith("câu"):
+                        current_q["question"] += " " + line_clean
 
-    # Chỉ giữ lại các câu hỏi bóc tách đủ phương án phương án
     return [q for q in data if len(q["options"]) >= 2]
 
 # ================= PDF =================
@@ -105,10 +129,34 @@ def read_pdf(file):
     data = []
 
     with pdfplumber.open(file) as pdf:
-        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        full_text = ""
+        for page in pdf.pages:
+            page_chars = page.chars
+            if not page_chars: continue
+            
+            # Cập nhật yêu cầu 1 (PDF): Chữ in chìm watermark EduQuiz nằm trong khung 
+            # thường có size chữ khổng lồ (> 15). Ta lọc bỏ ngay từ tầng ký tự.
+            lines_dict = {}
+            for c in page_chars:
+                if c["size"] > 15: 
+                    continue # Loại bỏ hoàn toàn chữ trong khung ẩn dưới nền
+                
+                top = round(c["top"], 1)
+                found_line = False
+                for t in lines_dict:
+                    if abs(t - top) < 3:
+                        lines_dict[t].append(c)
+                        found_line = True
+                        break
+                if not found_line:
+                    lines_dict[top] = [c]
+            
+            for t in sorted(lines_dict.keys()):
+                line_chars = sorted(lines_dict[t], key=lambda x: x["x0"])
+                full_text += "".join([c["text"] for c in line_chars]) + "\n"
 
     # Tách các khối bắt đầu bằng chữ "Câu"
-    blocks = re.split(r'(?=Câu\s*\d+\:)', text)
+    blocks = re.split(r'(?=Câu\s*\d+[:\.])', full_text)
 
     for block in blocks:
         lines = [x.strip() for x in block.split("\n") if x.strip()]
@@ -116,31 +164,34 @@ def read_pdf(file):
             continue
 
         question = lines[0]
+        if not question.lower().startswith("câu"): continue
         
-        # Lọc bỏ dòng giải thích ra khỏi phần text xử lý đáp án
+        # Cập nhật yêu cầu 2 (PDF): Lọc bỏ triệt để dòng giải thích nền xanh
         filtered_lines = []
         for line in lines[1:]:
-            if line.lower().startswith("trong excel") or line.lower().startswith("giải thích"):
+            if is_explanation_green(line):
                 continue
             filtered_lines.append(line)
             
+        # Ép buộc bẻ dọc toàn bộ các đáp án nằm ngang ra thành các dòng riêng biệt
         block_text = " ".join(filtered_lines)
-
-        # Trích xuất chuẩn xác các cụm A. B. C. D.
-        matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
-
+        block_text = re.sub(r'\s+(\*?\s*[A-D]\s*[\.\:])', r'\n\1', block_text)
+        
+        sub_lines = block_text.split('\n')
         options = []
         correct = None
 
-        for m in matches:
-            m = m.strip()
-            is_correct = m.startswith("*")
-            clean = m.replace("*", "").strip()
+        for sub_line in sub_lines:
+            matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', sub_line.strip())
+            for m in matches:
+                m = m.strip()
+                is_correct = m.startswith("*")
+                clean = m.replace("*", "").strip()
 
-            if len(options) < 4:  # Giới hạn chặt chẽ chỉ lấy 4 đáp án hệ ABCD
-                options.append(clean)
-                if is_correct:
-                    correct = clean
+                if len(options) < 4: 
+                    options.append(clean)
+                    if is_correct:
+                        correct = clean
 
         if len(options) >= 2:
             data.append({
@@ -166,10 +217,10 @@ with st.sidebar:
             else:
                 st.session_state.data_thi = read_docx(uploaded_file)
 
-            if shuffle_q:
+            if shuffle_q and st.session_state.data_thi:
                 random.shuffle(st.session_state.data_thi)
 
-            if shuffle_a:
+            if shuffle_a and st.session_state.data_thi:
                 for q in st.session_state.data_thi:
                     random.shuffle(q["options"])
 
