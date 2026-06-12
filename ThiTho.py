@@ -1,9 +1,11 @@
 import streamlit as st
 from docx import Document
-import random
-import time
+from docx.shared import RGBColor
+from docx.enum.text import WD_COLOR_INDEX
 import pdfplumber
+import random
 import re
+import time
 
 # ================= UI =================
 st.set_page_config(page_title="ThiTho Pro", layout="wide")
@@ -12,7 +14,6 @@ st.markdown("""
 <style>
 .main .block-container {
     max-width: 95% !important;
-    padding-top: 2rem !important;
 }
 .question-box {
     background: #fff;
@@ -33,7 +34,7 @@ for key in ["data_thi", "user_answers", "current_idx", "next_trigger"]:
     if key not in st.session_state:
         st.session_state[key] = None if key == "data_thi" else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
-# ================= PARSE DOCX =================
+# ================= DOCX =================
 def read_docx(file):
     doc = Document(file)
     data = []
@@ -44,7 +45,7 @@ def read_docx(file):
         if not text:
             continue
 
-        # Câu hỏi bắt đầu bằng "Câu"
+        # CÂU HỎI
         if text.lower().startswith("câu"):
             current_q = {
                 "question": text,
@@ -54,16 +55,36 @@ def read_docx(file):
             data.append(current_q)
             continue
 
-        # Đáp án A. B. C. D. kết thúc bằng dấu .
+        # ĐÁP ÁN
         if current_q is not None:
-            m = re.match(r'^([A-D])\.\s*(.+)\.$', text)
+            m = re.match(r'^([A-D])\.\s*(.+)\.?$', text)
             if m:
-                ans = f"{m.group(1)}. {m.group(2)}"
-                current_q["options"].append(ans)
+                letter = m.group(1)
+                answer = f"{letter}. {m.group(2).rstrip('.')}"
+
+                is_correct = False
+
+                for run in para.runs:
+                    # ⭐ dấu *
+                    if run.text.strip().startswith("*"):
+                        is_correct = True
+
+                    # 🔴 chữ đỏ
+                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                        is_correct = True
+
+                    # 🟡 highlight vàng
+                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
+                        is_correct = True
+
+                current_q["options"].append(answer)
+
+                if is_correct:
+                    current_q["correct"] = answer
 
     return [q for q in data if len(q["options"]) >= 2]
 
-# ================= PARSE PDF =================
+# ================= PDF =================
 def read_pdf(file):
     data = []
 
@@ -78,18 +99,32 @@ def read_pdf(file):
             continue
 
         question = lines[0]
-        options = []
 
-        for line in lines:
-            m = re.match(r'^([A-D])\.\s*(.+)\.$', line)
-            if m:
-                options.append(f"{m.group(1)}. {m.group(2)}")
+        block_text = " ".join(lines[1:])
+
+        # 🔥 tách A/B/C/D chuẩn kể cả dính dòng
+        matches = re.findall(r'([A-D]\.\s*.*?)(?=\s*[A-D]\.|$)', block_text)
+
+        options = []
+        correct = None
+
+        for m in matches:
+            m = m.strip()
+
+            is_correct = m.startswith("*")
+
+            clean = m.replace("*", "").strip()
+
+            options.append(clean)
+
+            if is_correct:
+                correct = clean
 
         if len(options) >= 2:
             data.append({
                 "question": question,
                 "options": options,
-                "correct": None
+                "correct": correct
             })
 
     return data
@@ -103,6 +138,7 @@ with st.sidebar:
     shuffle_a = st.checkbox("Đảo đáp án")
 
     if st.button("🚀 BẮT ĐẦU", use_container_width=True):
+
         if uploaded_file is not None:
 
             if uploaded_file.name.lower().endswith(".pdf"):
@@ -145,15 +181,22 @@ if st.session_state.data_thi:
 
     done = len(st.session_state.user_answers)
 
+    correct_count = sum(
+        1 for i, ans in st.session_state.user_answers.items()
+        if ans == data[i].get("correct")
+    )
+
     col1, col2, col3 = st.columns([1, 2.5, 1.2])
 
     # ===== LEFT =====
     with col1:
         st.write("### 📊 Thống kê")
         st.write(f"Đã làm: {done}/{total}")
+        st.write(f"Đúng: {correct_count}")
+        st.write(f"Sai: {done - correct_count}")
         st.progress(done / total if total else 0)
 
-    # ===== MIDDLE =====
+    # ===== CENTER =====
     with col2:
         item = data[idx]
 
@@ -179,11 +222,19 @@ if st.session_state.data_thi:
             st.session_state.next_trigger = True
             st.rerun()
 
+        # ===== RESULT =====
         if answered:
-            st.info("Đã chọn đáp án")
+            user_ans = st.session_state.user_answers[idx]
+            correct_ans = item.get("correct")
+
+            if correct_ans is None:
+                st.warning("⚠️ Chưa detect được đáp án đúng")
+            elif user_ans == correct_ans:
+                st.success("ĐÚNG ✅")
+            else:
+                st.error(f"SAI ❌ | Đáp án đúng: {correct_ans}")
 
         c1, c2 = st.columns(2)
-
         if c1.button("⬅ Trước"):
             st.session_state.current_idx = max(0, idx - 1)
             st.rerun()
@@ -206,7 +257,10 @@ if st.session_state.data_thi:
                     label = str(k + 1)
 
                     if k in st.session_state.user_answers:
-                        label += " ✓"
+                        if st.session_state.user_answers[k] == data[k].get("correct"):
+                            label += " ✅"
+                        else:
+                            label += " ❌"
 
                     if cols[j].button(label, key=f"m_{k}"):
                         st.session_state.current_idx = k
@@ -222,4 +276,4 @@ if st.session_state.data_thi:
             st.rerun()
 
 else:
-    st.info("👈 Upload file DOCX hoặc PDF để bắt đầu")
+    st.info("👈 Upload file DOCX / PDF để bắt đầu")
