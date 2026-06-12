@@ -104,8 +104,8 @@ with st.sidebar:
     t2 = st.checkbox("Đảo đáp án")
     
     if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
-    st.session_state.user_answers = {}
-    st.session_state.current_idx = 0
+        st.session_state.user_answers = {}
+        st.session_state.current_idx = 0
 
     if uploaded_file.name.lower().endswith(".pdf"):
         st.session_state.data_thi = read_pdf(uploaded_file)
