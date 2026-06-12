@@ -96,10 +96,10 @@ def read_docx(file):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ CÀI ĐẶT")
-uploaded_file = st.file_uploader(
+    uploaded_file = st.file_uploader(
     "Tải đề",
     type=["docx", "pdf"]
-)
+    )
     t1 = st.checkbox("Đảo câu hỏi")
     t2 = st.checkbox("Đảo đáp án")
     
