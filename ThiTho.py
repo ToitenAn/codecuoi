@@ -22,7 +22,7 @@ st.markdown("""
 }
 .question-text { font-size: 20px; font-weight: 700; color: #1e293b; }
 .correct-highlight {
-    background-color: #FFFF00; /* Bôi vàng */
+    background-color: #FFFF00; /* Bôi vàng hiển thị đáp án đúng */
     color: #FF0000; /* Chữ đỏ */
     font-weight: bold;
     padding: 2px 5px;
@@ -36,14 +36,17 @@ for key in ["data_thi", "user_answers", "current_idx", "file_docx_clean", "next_
     if key not in st.session_state:
         st.session_state[key] = None if key in ["data_thi", "file_docx_clean"] else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
-# ================= HÀM LỌC GIẢI THÍCH (VỆT XANH LÁ) =================
+# ================= HÀM CHUYÊN BIỆT LỌC DÒNG GIẢI THÍCH (NỀN XANH LÁ) =================
 def check_is_explanation(line_text):
-    """Nhận diện các dòng giải thích để loại bỏ hoàn toàn"""
+    """
+    Nhận diện chính xác tất cả các kiểu dòng giải thích có nền xanh lá trong file HUBT để loại bỏ
+    """
     txt = line_text.lower().strip()
     keywords = [
         "trong excel", "giải thích", "để di chuyển", "cấu trúc của", 
         "đáp án đúng", "hướng dẫn", "trong thiết kế", "công cụ số",
-        "khi thiết kế", "địa chỉ tuyệt đối", "phần mềm access", "về côn"
+        "khi thiết kế", "địa chỉ tuyệt đối", "phần mềm access", "về côn",
+        "địa chỉ ô", "mặc định", "hàm count", "hàm sum", "phần page", "phần report"
     ]
     return any(kw in txt for kw in keywords)
 
@@ -54,20 +57,22 @@ def process_docx_clean(file_bytes):
     current_q = None
 
     for para in doc.paragraphs:
-        # Xóa triệt để các biến thể chữ watermark nếu có trong docx
+        # Loại bỏ sạch chữ xám EduQuiz đứng dính hoặc rời
         text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', para.text).strip()
-        # Loại bỏ các ký tự đơn lẻ gây nhiễu đứng một mình
-        if not text or text in ['Z', 'z', 'D']:
+        if not text or text in ['Z', 'z', 'D', '--- PAGE ---']:
             continue
 
+        # Phát hiện câu hỏi
         if text.lower().startswith("câu"):
             current_q = {"question": text, "options": [], "correct": None}
             data.append(current_q)
             continue
 
+        # Bỏ hoàn toàn dòng giải thích (nền xanh)
         if check_is_explanation(text):
             continue
 
+        # Cắt đáp án
         if current_q is not None:
             matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', text)
             if matches:
@@ -82,32 +87,24 @@ def process_docx_clean(file_bytes):
 
     return [q for q in data if len(q["options"]) >= 2]
 
-# ================= XỬ LÝ ĐỌC FILE PDF SẠCH (THUẬT TOÁN LAYER) =================
+# ================= XỬ LÝ ĐỌC FILE PDF (BÓC TÁCH LAYER CHỮ XÁM) =================
 def process_pdf_clean(file_bytes):
     data = []
     
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         full_text = ""
         for page in pdf.pages:
-            # Thuật toán lọc Layer: Chỉ lấy những chữ KHÔNG phải là watermark chìm dựa trên cỡ chữ chuẩn
             page_chars = page.chars
             if not page_chars: continue
             
-            # Thống kê cỡ chữ phổ biến nhất trên trang (cỡ chữ của câu hỏi và đáp án)
-            sizes = [round(c["size"], 1) for c in page_chars]
-            if not sizes: continue
-            common_size = max(set(sizes), key=sizes.count)
-            
-            # Trích xuất văn bản nhưng loại bỏ các ký tự có size bất thường (quá to như EduQuiz chéo trang)
-            filtered_text = ""
-            # Trích xuất text theo dòng chuẩn của trang
+            # Thuật toán Layer: Chỉ lấy chữ có kích thước chuẩn của câu hỏi/đáp án. 
+            # Loại bỏ hoàn toàn các chữ xám khổng lồ (size > 15) ẩn dưới nền.
             lines_dict = {}
             for c in page_chars:
-                # Nếu cỡ chữ quá lớn (> 15) hoặc quá nhỏ thì bỏ qua (Watermark của EduQuiz thường có size rất lớn)
-                if c["size"] > 16: 
-                    continue
+                if c["size"] > 15: 
+                    continue # Bỏ qua chữ xám Watermark EduQuiz khổng lồ
                 
-                # Gom các chữ cùng một dòng (tọa độ top gần nhau)
+                # Gom cụm các ký tự trên cùng một dòng dựa theo tọa độ dọc (top)
                 top = round(c["top"], 1)
                 found_line = False
                 for t in lines_dict:
@@ -118,19 +115,19 @@ def process_pdf_clean(file_bytes):
                 if not found_line:
                     lines_dict[top] = [c]
             
-            # Sắp xếp các dòng từ trên xuống dưới và gộp chữ
+            # Khôi phục văn bản sạch theo thứ tự từ trên xuống, từ trái sang
             for t in sorted(lines_dict.keys()):
                 line_chars = sorted(lines_dict[t], key=lambda x: x["x0"])
                 line_str = "".join([c["text"] for c in line_chars])
-                filtered_text += line_str + "\n"
-                
-            full_text += filtered_text + "\n"
+                full_text += line_str + "\n"
 
-    # Gột sạch thêm một lần nữa các từ khóa tiêu đề trang lặp lại
+    # Dọn dẹp nốt tiêu đề lặp lại ở các đầu trang PDF
     full_text = re.sub(r'(?i)--- PAGE \d+ ---|TIN\s*3\s*-\s*HUBT\s*2026', '', full_text)
     full_text = re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', full_text)
+    full_text = re.sub(r'Số trang:\s*\d+\s*Số câu hỏi:\s*\d+', '', full_text)
+    full_text = re.sub(r'PHẦN\s*\d+:\s*[A-Z\s\(\)0-9\-]+', '', full_text)
     
-    # Tiến hành cắt khối câu hỏi
+    # Cắt văn bản thành các khối câu hỏi dựa vào "Câu [số]:" hoặc "Câu [số]."
     blocks = re.split(r'(?=Câu\s*\d+[:\.])', full_text)
 
     for block in blocks:
@@ -140,6 +137,7 @@ def process_pdf_clean(file_bytes):
         question = lines[0]
         if not question.lower().startswith("câu"): continue
 
+        # Lọc bỏ hoàn toàn các dòng giải thích (chữ nền xanh)
         filtered_lines = []
         for line in lines[1:]:
             if check_is_explanation(line) or line.startswith("[Image") or line in ['Z', 'z', 'D']:
@@ -147,6 +145,8 @@ def process_pdf_clean(file_bytes):
             filtered_lines.append(line)
             
         block_text = " ".join(filtered_lines)
+        
+        # Bóc tách 4 đáp án hệ A-B-C-D
         matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
 
         options = []
@@ -176,6 +176,7 @@ def export_to_docx(data_list):
     for idx, item in enumerate(data_list, 1):
         p_q = doc.add_paragraph()
         p_q.paragraph_format.space_before = Pt(12)
+        # Chuẩn hóa lại hiển thị số thứ tự câu từ 1 đến hết
         p_q.add_run(f"Câu {idx}: {item['question'].split(':', 1)[-1].strip() if ':' in item['question'] else item['question']}").bold = True
 
         for opt in item["options"]:
@@ -195,7 +196,7 @@ def export_to_docx(data_list):
     doc.save(bio)
     return bio.getvalue()
 
-# ================= THANH SIDEBAR =================
+# ================= THANH SIDEBAR CÀI ĐẶT =================
 with st.sidebar:
     st.header("⚙️ THIẾT LẬP BỘ ĐỀ")
     uploaded_file = st.file_uploader("Tải lên đề thi (DOCX hoặc PDF)", type=["docx", "pdf"])
@@ -204,7 +205,7 @@ with st.sidebar:
 
     if st.button("🚀 BẮT ĐẦU TRẮC NGHIỆM", use_container_width=True, type="primary"):
         if uploaded_file is not None:
-            with st.spinner("Đang bóc tách nâng cao tách biệt Layer Watermark ẩn..."):
+            with st.spinner("Đang loại bỏ chữ xám và lọc bỏ phần giải thích nền xanh..."):
                 file_bytes = uploaded_file.read()
                 
                 if uploaded_file.name.lower().endswith(".pdf"):
@@ -213,6 +214,7 @@ with st.sidebar:
                     parsed_data = process_docx_clean(file_bytes)
                 
                 if parsed_data:
+                    # Xuất file word sạch để lưu trữ trước khi xáo trộn đề
                     st.session_state.file_docx_clean = export_to_docx(parsed_data)
                     if shuffle_q: random.shuffle(parsed_data)
                     if shuffle_a:
@@ -224,12 +226,12 @@ with st.sidebar:
                     st.session_state.next_trigger = False
                     st.rerun()
                 else:
-                    st.error("❌ Không thể phân tích cấu trúc, kiểm tra lại file!")
+                    st.error("❌ Không thể bóc tách, kiểm tra lại định dạng file!")
 
     if st.session_state.data_thi:
         st.markdown("---")
         st.download_button(
-            label="📥 TẢI FILE WORD SẠCH (.DOCX)",
+            label="📥 TẢI FILE WORD SIÊU SẠCH (.DOCX)",
             data=st.session_state.file_docx_clean,
             file_name="De_Thi_Da_Loc_Sach.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -252,6 +254,7 @@ if st.session_state.data_thi:
 
     col1, col2, col3 = st.columns([1, 2.5, 1.2])
 
+    # ===== CỘT TRÁI: THỐNG KÊ BIỂU ĐỒ =====
     with col1:
         st.write("### 📊 Tiến độ")
         done = len(st.session_state.user_answers)
@@ -260,6 +263,7 @@ if st.session_state.data_thi:
         st.write(f"Đúng: {correct_count} | Sai: {done - correct_count}")
         st.progress(done / total if total else 0)
 
+    # ===== CỘT GIỮA: NỘI DUNG THI =====
     with col2:
         st.markdown(f"""
         <div class="question-box">
@@ -295,6 +299,7 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 
+    # ===== CỘT PHẢI: MỤC LỤC ĐIỀU HƯỚNG =====
     with col3:
         st.write("### 📑 Mục lục")
         for i in range(0, total, 4):
@@ -310,6 +315,7 @@ if st.session_state.data_thi:
                         st.session_state.current_idx = k
                         st.rerun()
 
+    # ===== TỰ ĐỘNG CHUYỂN CÂU (AUTO NEXT) =====
     if st.session_state.next_trigger:
         time.sleep(0.5)
         st.session_state.next_trigger = False
@@ -317,4 +323,4 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 else:
-    st.info("👈 Vui lòng tải lên file để hệ thống tự động bóc tách sạch sẽ dữ liệu lỗi!")
+    st.info("👈 Hãy tải file PDF/DOCX lên ở thanh bên trái để hệ thống tự động lọc sạch và chạy trắc nghiệm trực tuyến!")
