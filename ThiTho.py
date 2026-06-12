@@ -1,11 +1,11 @@
 import streamlit as st
 from docx import Document
 from docx.shared import Pt, RGBColor
-from docx.enum.text import WD_COLOR_INDEX
 import pdfplumber
 import random
 import re
 import io
+import time
 
 # ================= GIAO DIỆN UI =================
 st.set_page_config(page_title="ThiTho Pro X", layout="wide", page_icon="🎯")
@@ -32,43 +32,61 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================= KHỞI TẠO STATE =================
-for key in ["data_thi", "user_answers", "current_idx", "file_docx_clean"]:
+for key in ["data_thi", "user_answers", "current_idx", "file_docx_clean", "next_trigger"]:
     if key not in st.session_state:
-        st.session_state[key] = None if key != "user_answers" else {}
+        st.session_state[key] = None if key in ["data_thi", "file_docx_clean"] else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
 # ================= HÀM LỌC WATERMARK VÀ GIẢI THÍCH =================
 def clean_text_core(text):
-    """Xóa sạch chữ EDUQUIZ in chìm (kể cả khi bị giãn cách chữ)"""
+    """Xóa sạch chữ EduQuiz in chìm lọt vào văn bản (kể cả khi bị giãn cách chữ hoặc dính ký tự rác)"""
     return re.sub(r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z', '', text)
 
 def check_is_explanation(line_text):
-    """Nhận diện các dòng giải thích (Vạch màu xanh lá) để loại bỏ"""
+    """Nhận diện các dòng giải thích để loại bỏ hoàn toàn khỏi câu hỏi/đáp án"""
     txt = line_text.lower()
-    keywords = ["trong excel", "giải thích", "để di chuyển", "cấu trúc của", "đáp án đúng", "hướng dẫn"]
-    return any(txt.startswith(kw) or kw in txt[:15] for kw in keywords)
+    keywords = [
+        "trong excel", "giải thích", "để di chuyển", "cấu trúc của", 
+        "đáp án đúng", "hướng dẫn", "trong thiết kế", "công cụ số",
+        "khi thiết kế", "địa chỉ tuyệt đối"
+    ]
+    return any(txt.startswith(kw) or kw in txt[:20] for kw in keywords)
 
 # ================= XỬ LÝ ĐỌC FILE PDF SẠCH =================
 def process_pdf_clean(file_bytes):
     data = []
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        raw_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        raw_text = ""
+        for page in pdf.pages:
+            p_text = page.extract_text() or ""
+            # Xóa các dòng header/footer số trang cố định của file PDF
+            p_text = re.sub(r'(?i)--- PAGE \d+ ---', '', p_text)
+            raw_text += p_text + "\n"
     
-    # Làm sạch watermark chìm trước khi cắt khối
+    # Làm sạch triệt để watermark EduQuiz trước khi bóc tách khối
     clean_text = clean_text_core(raw_text)
+    
+    # Tách khối văn bản dựa theo cấu trúc "Câu [số]:" hoặc "Câu [số]."
     blocks = re.split(r'(?=Câu\s*\d+[:\.])', clean_text)
 
     for block in blocks:
         lines = [x.strip() for x in block.split("\n") if x.strip()]
-        if not lines: continue
+        if not lines: 
+            continue
 
         question = lines[0]
-        if not question.lower().startswith("câu"): continue
+        if not question.lower().startswith("câu"): 
+            continue
 
-        # Loại bỏ dòng giải thích
-        filtered_lines = [line for line in lines[1:] if not check_is_explanation(line)]
+        # Loại bỏ các dòng giải thích và dòng chứa ảnh dạng [Image ...]
+        filtered_lines = []
+        for line in lines[1:]:
+            if check_is_explanation(line) or line.startswith("[Image"):
+                continue
+            filtered_lines.append(line)
+            
         block_text = " ".join(filtered_lines)
 
-        # Trích xuất chính xác hệ 4 đáp án A-D
+        # Trích xuất chính xác hệ 4 đáp án dạng A., B., C., D. (có hoặc không có dấu * định dạng đáp án đúng)
         matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
 
         options = []
@@ -91,7 +109,6 @@ def process_pdf_clean(file_bytes):
 # ================= HÀM XUẤT FILE WORD (.DOCX) SẠCH =================
 def export_to_docx(data_list):
     doc = Document()
-    # Thêm cấu hình font chuẩn
     style = doc.styles['Normal']
     style.font.name = 'Arial'
     style.font.size = Pt(12)
@@ -138,20 +155,22 @@ with st.sidebar:
                     # Tạo sẵn file Word sạch nguyên bản trước khi đảo để người dùng tải về
                     st.session_state.file_docx_clean = export_to_docx(parsed_data)
                     
-                    if shuffle_q: random.shuffle(parsed_data)
+                    if shuffle_q: 
+                        random.shuffle(parsed_data)
                     if shuffle_a:
-                        for q in parsed_data: random.shuffle(q["options"])
+                        for q in parsed_data: 
+                            random.shuffle(q["options"])
                         
                     st.session_state.data_thi = parsed_data
                     st.session_state.user_answers = {}
                     st.session_state.current_idx = 0
+                    st.session_state.next_trigger = False
                     st.rerun()
                 else:
                     st.error("❌ Không thể bóc tách câu hỏi, kiểm tra lại cấu trúc file!")
 
     if st.session_state.data_thi:
         st.markdown("---")
-        # Nút bấm tải File Word Đã Lọc Sạch
         st.download_button(
             label="📥 TẢI FILE WORD SẠCH (.DOCX)",
             data=st.session_state.file_docx_clean,
@@ -162,6 +181,9 @@ with st.sidebar:
         if st.button("🔄 Đổi bộ đề khác", use_container_width=True):
             st.session_state.data_thi = None
             st.session_state.file_docx_clean = None
+            st.session_state.user_answers = {}
+            st.session_state.current_idx = 0
+            st.session_state.next_trigger = False
             st.rerun()
 
 # ================= KHÔNG GIAN HIỂN THỊ CHÍNH =================
@@ -173,6 +195,7 @@ if st.session_state.data_thi:
 
     col1, col2, col3 = st.columns([1, 2.5, 1.2])
 
+    # ===== CỘT TRÁI: THỐNG KÊ =====
     with col1:
         st.write("### 📊 Tiến độ")
         done = len(st.session_state.user_answers)
@@ -181,6 +204,7 @@ if st.session_state.data_thi:
         st.write(f"Đúng: {correct_count} | Sai: {done - correct_count}")
         st.progress(done / total if total else 0)
 
+    # ===== CỘT GIỮA: NỘI DUNG CÂU HỎI =====
     with col2:
         st.markdown(f"""
         <div class="question-box">
@@ -198,6 +222,7 @@ if st.session_state.data_thi:
 
         if choice and not answered:
             st.session_state.user_answers[idx] = choice
+            st.session_state.next_trigger = True
             st.rerun()
 
         if answered:
@@ -216,6 +241,7 @@ if st.session_state.data_thi:
             st.session_state.current_idx += 1
             st.rerun()
 
+    # ===== CỘT PHẢI: MỤC LỤC =====
     with col3:
         st.write("### 📑 Mục lục")
         for i in range(0, total, 4):
@@ -230,5 +256,13 @@ if st.session_state.data_thi:
                     if cols[j].button(label, key=f"m_{k}", type=btn_type):
                         st.session_state.current_idx = k
                         st.rerun()
+
+    # ===== TỰ ĐỘNG CHUYỂN CÂU HỎI (AUTO NEXT) =====
+    if st.session_state.next_trigger:
+        time.sleep(0.5)
+        st.session_state.next_trigger = False
+        if st.session_state.current_idx < total - 1:
+            st.session_state.current_idx += 1
+            st.rerun()
 else:
-    st.
+    st.info("👈 Vui lòng kéo thả file PDF bộ đề bị dính hình mờ vào thanh bên để xử lý tự động!")
