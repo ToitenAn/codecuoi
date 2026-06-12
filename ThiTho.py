@@ -53,7 +53,7 @@ def read_docx(file):
         if not text:
             continue
 
-        # CÂU HỎI
+        # NHẬN DIỆN CÂU HỎI
         if text.lower().startswith("câu"):
             current_q = {
                 "question": text,
@@ -63,34 +63,41 @@ def read_docx(file):
             data.append(current_q)
             continue
 
-        # ĐÁP ÁN
+        # LỌC BỎ DÒNG GIẢI THÍCH (Không đưa vào đề)
+        if text.lower().startswith("trong excel") or text.lower().startswith("giải thích") or text.lower().startswith("đáp án"):
+            continue
+
+        # NHẬN DIỆN ĐÁP ÁN (Hỗ trợ cả việc ABCD dính trên cùng 1 dòng)
         if current_q is not None:
-            m = re.match(r'^([A-D])\.\s*(.+)\.?$', text)
-            if m:
-                letter = m.group(1)
-                answer = f"{letter}. {m.group(2).rstrip('.')}"
+            # Tìm tất cả các cụm dạng A. ..., B. ..., C. ..., D. ... có hoặc không có dấu *
+            matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', text)
+            
+            if matches:
+                for m in matches:
+                    m_clean = m.strip()
+                    
+                    # Kiểm tra dấu * trực tiếp từ Text
+                    is_correct = m_clean.startswith("*")
+                    
+                    # Loại bỏ dấu định dạng * để lấy text sạch
+                    opt_text = m_clean.replace("*", "").strip()
+                    
+                    # Kiểm tra chữ đỏ hoặc bôi vàng từ các Runs trong đoạn
+                    for run in para.runs:
+                        if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
+                            # Nếu đoạn text của run này trùng với đáp án hiện tại
+                            if opt_text[3:] in run.text: 
+                                is_correct = True
+                        if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
+                            if opt_text[3:] in run.text:
+                                is_correct = True
 
-                is_correct = False
+                    if len(current_q["options"]) < 4:  # Đảm bảo chỉ lấy tối đa 4 đáp án A-B-C-D
+                        current_q["options"].append(opt_text)
+                        if is_correct:
+                            current_q["correct"] = opt_text
 
-                # Kiểm tra cả 3 điều kiện dấu *, chữ đỏ, bôi vàng
-                if text.startswith("*"):
-                    is_correct = True
-                    # Làm sạch dấu * khỏi chuỗi hiển thị nếu cần
-                    answer = answer.lstrip("* ")
-
-                for run in para.runs:
-                    # 🔴 chữ đỏ
-                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                        is_correct = True
-                    # 🟡 highlight vàng
-                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                        is_correct = True
-
-                current_q["options"].append(answer)
-
-                if is_correct:
-                    current_q["correct"] = answer
-
+    # Chỉ giữ lại các câu hỏi bóc tách đủ phương án phương án
     return [q for q in data if len(q["options"]) >= 2]
 
 # ================= PDF =================
@@ -100,7 +107,8 @@ def read_pdf(file):
     with pdfplumber.open(file) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
 
-    blocks = re.split(r'(?=Câu)', text)
+    # Tách các khối bắt đầu bằng chữ "Câu"
+    blocks = re.split(r'(?=Câu\s*\d+\:)', text)
 
     for block in blocks:
         lines = [x.strip() for x in block.split("\n") if x.strip()]
@@ -108,25 +116,31 @@ def read_pdf(file):
             continue
 
         question = lines[0]
-        block_text = " ".join(lines[1:])
+        
+        # Lọc bỏ dòng giải thích ra khỏi phần text xử lý đáp án
+        filtered_lines = []
+        for line in lines[1:]:
+            if line.lower().startswith("trong excel") or line.lower().startswith("giải thích"):
+                continue
+            filtered_lines.append(line)
+            
+        block_text = " ".join(filtered_lines)
 
-        # Tách A/B/C/D chuẩn
-        matches = re.findall(r'([A-D]\.\s*.*?)(?=\s*[A-D]\.|$)', block_text)
+        # Trích xuất chuẩn xác các cụm A. B. C. D.
+        matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
 
         options = []
         correct = None
 
         for m in matches:
             m = m.strip()
-            
-            # Nhận diện dấu * (PDF chủ yếu nhận diện được ký tự text này)
-            is_correct = m.startswith("*") or "đúng" in m.lower() 
+            is_correct = m.startswith("*")
             clean = m.replace("*", "").strip()
 
-            options.append(clean)
-
-            if is_correct:
-                correct = clean
+            if len(options) < 4:  # Giới hạn chặt chẽ chỉ lấy 4 đáp án hệ ABCD
+                options.append(clean)
+                if is_correct:
+                    correct = clean
 
         if len(options) >= 2:
             data.append({
@@ -157,8 +171,6 @@ with st.sidebar:
 
             if shuffle_a:
                 for q in st.session_state.data_thi:
-                    # Lưu lại đáp án đúng gốc để không bị lệch khi đảo
-                    old_correct = q["correct"]
                     random.shuffle(q["options"])
 
             st.session_state.user_answers = {}
@@ -214,23 +226,12 @@ if st.session_state.data_thi:
         answered = idx in st.session_state.user_answers
         correct_ans = item.get("correct")
 
-        # Biến đổi danh sách đáp án để thêm định dạng trực quan khi ĐÃ TRẢ LỜI
-        display_options = []
-        for opt in item["options"]:
-            if answered and opt == correct_ans:
-                # 🟡🔴⭐ Áp dụng cả 3: Thêm dấu *, bôi vàng và chữ đỏ qua HTML
-                display_options.append(f"* {opt} (Đáp án đúng)")
-            else:
-                display_options.append(opt)
-
-        # Cập nhật lại index được chọn dựa trên mảng hiển thị mới
+        # Đồng bộ index chính xác khi hiển thị đáp án radio button
         selected_index = None
         if answered:
             user_ans = st.session_state.user_answers[idx]
-            for i, opt in enumerate(item["options"]):
-                if opt == user_ans:
-                    selected_index = i
-                    break
+            if user_ans in item["options"]:
+                selected_index = item["options"].index(user_ans)
 
         choice = st.radio(
             "Đáp án:",
@@ -256,7 +257,7 @@ if st.session_state.data_thi:
             else:
                 st.error("SAI ❌")
             
-            # Hiển thị đáp án đúng rõ ràng bằng Markdown/HTML kết hợp cả 3 định dạng
+            # Hiển thị đáp án đúng bao gồm cả 3 định dạng: Dấu *, bôi vàng và chữ đỏ bằng HTML
             st.markdown(f"**Đáp án đúng hệ thống tìm thấy:** <span class='correct-highlight'>⭐ {correct_ans}</span>", unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
