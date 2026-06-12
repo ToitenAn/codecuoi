@@ -1,7 +1,5 @@
 import streamlit as st
 from docx import Document
-from docx.shared import RGBColor
-from docx.enum.text import WD_COLOR_INDEX
 import pdfplumber
 import random
 import re
@@ -57,32 +55,23 @@ def read_docx(file):
 
         # ĐÁP ÁN
         if current_q is not None:
-            m = re.match(r'^([A-D])\.\s*(.+)\.?$', text)
+            m = re.match(r'^([A-D])\.\s*(.+)$', text)
             if m:
                 letter = m.group(1)
-                answer = f"{letter}. {m.group(2).rstrip('.')}"
+                content = m.group(2).strip().rstrip(".")
 
-                is_correct = False
-
-                for run in para.runs:
-                    # ⭐ dấu *
-                    if run.text.strip().startswith("*"):
-                        is_correct = True
-
-                    # 🔴 chữ đỏ
-                    if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                        is_correct = True
-
-                    # 🟡 highlight vàng
-                    if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                        is_correct = True
+                answer = f"{letter}. {content}"
 
                 current_q["options"].append(answer)
+
+                # ✅ FIX: detect correct bằng ký tự *
+                is_correct = "*" in text or text.startswith("*")
 
                 if is_correct:
                     current_q["correct"] = answer
 
     return [q for q in data if len(q["options"]) >= 2]
+
 
 # ================= PDF =================
 def read_pdf(file):
@@ -99,10 +88,8 @@ def read_pdf(file):
             continue
 
         question = lines[0]
-
         block_text = " ".join(lines[1:])
 
-        # 🔥 tách A/B/C/D chuẩn kể cả dính dòng
         matches = re.findall(r'([A-D]\.\s*.*?)(?=\s*[A-D]\.|$)', block_text)
 
         options = []
@@ -111,9 +98,9 @@ def read_pdf(file):
         for m in matches:
             m = m.strip()
 
-            is_correct = m.startswith("*")
+            is_correct = "*" in m or m.startswith("*")
 
-            clean = m.replace("*", "").strip()
+            clean = m.replace("*", "").strip().rstrip(".")
 
             options.append(clean)
 
@@ -128,6 +115,7 @@ def read_pdf(file):
             })
 
     return data
+
 
 # ================= SIDEBAR =================
 with st.sidebar:
@@ -172,6 +160,7 @@ with st.sidebar:
             st.session_state.current_idx = 0
             st.rerun()
 
+
 # ================= MAIN =================
 if st.session_state.data_thi:
 
@@ -213,7 +202,7 @@ if st.session_state.data_thi:
             "Đáp án:",
             item["options"],
             key=f"q_{idx}",
-            index=item["options"].index(st.session_state.user_answers[idx]) if answered else None,
+            index=item["options"].index(st.session_state.user_answers[idx]) if answered else 0,
             disabled=answered
         )
 
@@ -268,7 +257,7 @@ if st.session_state.data_thi:
 
     # ===== AUTO NEXT =====
     if st.session_state.next_trigger:
-        time.sleep(0.5)
+        time.sleep(0.3)
         st.session_state.next_trigger = False
 
         if st.session_state.current_idx < total - 1:
