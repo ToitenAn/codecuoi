@@ -26,6 +26,14 @@ st.markdown("""
     font-size: 20px;
     font-weight: 700;
 }
+/* CSS hỗ trợ bôi màu đáp án hiển thị */
+.correct-highlight {
+    background-color: #FFFF00; /* Bôi vàng */
+    color: #FF0000; /* Chữ đỏ */
+    font-weight: bold;
+    padding: 2px 5px;
+    border-radius: 4px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -64,15 +72,16 @@ def read_docx(file):
 
                 is_correct = False
 
-                for run in para.runs:
-                    # ⭐ dấu *
-                    if run.text.strip().startswith("*"):
-                        is_correct = True
+                # Kiểm tra cả 3 điều kiện dấu *, chữ đỏ, bôi vàng
+                if text.startswith("*"):
+                    is_correct = True
+                    # Làm sạch dấu * khỏi chuỗi hiển thị nếu cần
+                    answer = answer.lstrip("* ")
 
+                for run in para.runs:
                     # 🔴 chữ đỏ
                     if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
                         is_correct = True
-
                     # 🟡 highlight vàng
                     if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
                         is_correct = True
@@ -99,10 +108,9 @@ def read_pdf(file):
             continue
 
         question = lines[0]
-
         block_text = " ".join(lines[1:])
 
-        # 🔥 tách A/B/C/D chuẩn kể cả dính dòng
+        # Tách A/B/C/D chuẩn
         matches = re.findall(r'([A-D]\.\s*.*?)(?=\s*[A-D]\.|$)', block_text)
 
         options = []
@@ -110,9 +118,9 @@ def read_pdf(file):
 
         for m in matches:
             m = m.strip()
-
-            is_correct = m.startswith("*")
-
+            
+            # Nhận diện dấu * (PDF chủ yếu nhận diện được ký tự text này)
+            is_correct = m.startswith("*") or "đúng" in m.lower() 
             clean = m.replace("*", "").strip()
 
             options.append(clean)
@@ -138,9 +146,7 @@ with st.sidebar:
     shuffle_a = st.checkbox("Đảo đáp án")
 
     if st.button("🚀 BẮT ĐẦU", use_container_width=True):
-
         if uploaded_file is not None:
-
             if uploaded_file.name.lower().endswith(".pdf"):
                 st.session_state.data_thi = read_pdf(uploaded_file)
             else:
@@ -151,16 +157,16 @@ with st.sidebar:
 
             if shuffle_a:
                 for q in st.session_state.data_thi:
+                    # Lưu lại đáp án đúng gốc để không bị lệch khi đảo
+                    old_correct = q["correct"]
                     random.shuffle(q["options"])
 
             st.session_state.user_answers = {}
             st.session_state.current_idx = 0
-
             st.rerun()
 
     if st.session_state.data_thi:
         st.markdown("---")
-
         if st.button("🎯 Làm lại"):
             st.session_state.user_answers = {}
             st.session_state.current_idx = 0
@@ -174,11 +180,9 @@ with st.sidebar:
 
 # ================= MAIN =================
 if st.session_state.data_thi:
-
     data = st.session_state.data_thi
     idx = st.session_state.current_idx
     total = len(data)
-
     done = len(st.session_state.user_answers)
 
     correct_count = sum(
@@ -208,12 +212,31 @@ if st.session_state.data_thi:
         """, unsafe_allow_html=True)
 
         answered = idx in st.session_state.user_answers
+        correct_ans = item.get("correct")
+
+        # Biến đổi danh sách đáp án để thêm định dạng trực quan khi ĐÃ TRẢ LỜI
+        display_options = []
+        for opt in item["options"]:
+            if answered and opt == correct_ans:
+                # 🟡🔴⭐ Áp dụng cả 3: Thêm dấu *, bôi vàng và chữ đỏ qua HTML
+                display_options.append(f"* {opt} (Đáp án đúng)")
+            else:
+                display_options.append(opt)
+
+        # Cập nhật lại index được chọn dựa trên mảng hiển thị mới
+        selected_index = None
+        if answered:
+            user_ans = st.session_state.user_answers[idx]
+            for i, opt in enumerate(item["options"]):
+                if opt == user_ans:
+                    selected_index = i
+                    break
 
         choice = st.radio(
             "Đáp án:",
             item["options"],
             key=f"q_{idx}",
-            index=item["options"].index(st.session_state.user_answers[idx]) if answered else None,
+            index=selected_index,
             disabled=answered
         )
 
@@ -225,14 +248,16 @@ if st.session_state.data_thi:
         # ===== RESULT =====
         if answered:
             user_ans = st.session_state.user_answers[idx]
-            correct_ans = item.get("correct")
 
             if correct_ans is None:
-                st.warning("⚠️ Chưa detect được đáp án đúng")
+                st.warning("⚠️ Chưa detect được đáp án đúng từ file gốc")
             elif user_ans == correct_ans:
                 st.success("ĐÚNG ✅")
             else:
-                st.error(f"SAI ❌ | Đáp án đúng: {correct_ans}")
+                st.error("SAI ❌")
+            
+            # Hiển thị đáp án đúng rõ ràng bằng Markdown/HTML kết hợp cả 3 định dạng
+            st.markdown(f"**Đáp án đúng hệ thống tìm thấy:** <span class='correct-highlight'>⭐ {correct_ans}</span>", unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
         if c1.button("⬅ Trước"):
@@ -246,16 +271,12 @@ if st.session_state.data_thi:
     # ===== RIGHT =====
     with col3:
         st.write("### 📑 Mục lục")
-
         for i in range(0, total, 4):
             cols = st.columns(4)
-
             for j in range(4):
                 k = i + j
                 if k < total:
-
                     label = str(k + 1)
-
                     if k in st.session_state.user_answers:
                         if st.session_state.user_answers[k] == data[k].get("correct"):
                             label += " ✅"
@@ -270,10 +291,8 @@ if st.session_state.data_thi:
     if st.session_state.next_trigger:
         time.sleep(0.5)
         st.session_state.next_trigger = False
-
         if st.session_state.current_idx < total - 1:
             st.session_state.current_idx += 1
             st.rerun()
-
 else:
     st.info("👈 Upload file DOCX / PDF để bắt đầu")
