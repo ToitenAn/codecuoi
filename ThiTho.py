@@ -42,6 +42,17 @@ for key in ["data_thi", "user_answers", "current_idx", "next_trigger"]:
     if key not in st.session_state:
         st.session_state[key] = None if key == "data_thi" else ({} if key == "user_answers" else (0 if key == "current_idx" else False))
 
+# ================= WATERMARK CLEANER =================
+def clean_watermark(text):
+    """
+    Hàm xóa sạch chữ hình mờ 'EDUQUIZ' ẩn dưới nền văn bản.
+    Xử lý được cả trường hợp chữ bị giãn cách: E D U Q U I Z hoặc eduquiz
+    """
+    # Regex xóa cụm từ EDUQUIZ chấp nhận có dấu cách giữa các ký tự
+    pattern = r'(?i)e\s*d\s*u\s*q\s*u\s*i\s*z'
+    cleaned_text = re.sub(pattern, '', text)
+    return cleaned_text
+
 # ================= DOCX =================
 def read_docx(file):
     doc = Document(file)
@@ -49,7 +60,8 @@ def read_docx(file):
     current_q = None
 
     for para in doc.paragraphs:
-        text = para.text.strip()
+        # Làm sạch đoạn văn bản khỏi Watermark trước khi xử lý
+        text = clean_watermark(para.text).strip()
         if not text:
             continue
 
@@ -63,41 +75,37 @@ def read_docx(file):
             data.append(current_q)
             continue
 
-        # LỌC BỎ DÒNG GIẢI THÍCH (Không đưa vào đề)
-        if text.lower().startswith("trong excel") or text.lower().startswith("giải thích") or text.lower().startswith("đáp án"):
+        # LỌC BỎ DÒNG GIẢI THÍCH (Vệt màu xanh lá trong ảnh)
+        # Kiểm tra nếu dòng text chứa nội dung giải thích lặp lại của câu trên
+        if text.lower().startswith("trong excel") or text.lower().startswith("giải thích") or text.lower().startswith("để di chuyển"):
             continue
 
-        # NHẬN DIỆN ĐÁP ÁN (Hỗ trợ cả việc ABCD dính trên cùng 1 dòng)
+        # NHẬN DIỆN ĐÁP ÁN (A, B, C, D)
         if current_q is not None:
-            # Tìm tất cả các cụm dạng A. ..., B. ..., C. ..., D. ... có hoặc không có dấu *
+            # Trích xuất các cụm đáp án trên cùng dòng hoặc khác dòng
             matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', text)
             
             if matches:
                 for m in matches:
                     m_clean = m.strip()
-                    
-                    # Kiểm tra dấu * trực tiếp từ Text
                     is_correct = m_clean.startswith("*")
-                    
-                    # Loại bỏ dấu định dạng * để lấy text sạch
                     opt_text = m_clean.replace("*", "").strip()
                     
-                    # Kiểm tra chữ đỏ hoặc bôi vàng từ các Runs trong đoạn
+                    # Quét định dạng màu sắc/bôi vàng trong các thẻ Runs
                     for run in para.runs:
+                        run_text_clean = clean_watermark(run.text)
                         if run.font.color and run.font.color.rgb == RGBColor(255, 0, 0):
-                            # Nếu đoạn text của run này trùng với đáp án hiện tại
-                            if opt_text[3:] in run.text: 
+                            if opt_text[3:] in run_text_clean: 
                                 is_correct = True
                         if run.font.highlight_color == WD_COLOR_INDEX.YELLOW:
-                            if opt_text[3:] in run.text:
+                            if opt_text[3:] in run_text_clean:
                                 is_correct = True
 
-                    if len(current_q["options"]) < 4:  # Đảm bảo chỉ lấy tối đa 4 đáp án A-B-C-D
+                    if len(current_q["options"]) < 4:
                         current_q["options"].append(opt_text)
                         if is_correct:
                             current_q["correct"] = opt_text
 
-    # Chỉ giữ lại các câu hỏi bóc tách đủ phương án phương án
     return [q for q in data if len(q["options"]) >= 2]
 
 # ================= PDF =================
@@ -105,9 +113,11 @@ def read_pdf(file):
     data = []
 
     with pdfplumber.open(file) as pdf:
-        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        # Trích xuất toàn bộ text và dọn sạch chữ EDUQUIZ rác bám kèm
+        raw_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+        text = clean_watermark(raw_text)
 
-    # Tách các khối bắt đầu bằng chữ "Câu"
+    # Tách khối câu hỏi chuẩn sau khi text đã sạch rác
     blocks = re.split(r'(?=Câu\s*\d+\:)', text)
 
     for block in blocks:
@@ -117,16 +127,17 @@ def read_pdf(file):
 
         question = lines[0]
         
-        # Lọc bỏ dòng giải thích ra khỏi phần text xử lý đáp án
+        # Loại bỏ các dòng giải thích (bắt đầu bằng các từ khóa giải nghĩa ngữ cảnh)
         filtered_lines = []
         for line in lines[1:]:
-            if line.lower().startswith("trong excel") or line.lower().startswith("giải thích"):
+            line_lower = line.lower()
+            if line_lower.startswith("trong excel") or line_lower.startswith("giải thích") or line_lower.startswith("để di chuyển"):
                 continue
             filtered_lines.append(line)
             
         block_text = " ".join(filtered_lines)
 
-        # Trích xuất chuẩn xác các cụm A. B. C. D.
+        # Trích xuất chuẩn xác hệ 4 đáp án
         matches = re.findall(r'(\*?\s*[A-D]\.\s*.*?)(?=\s*\*?\s*[A-D]\.|$)', block_text)
 
         options = []
@@ -137,7 +148,7 @@ def read_pdf(file):
             is_correct = m.startswith("*")
             clean = m.replace("*", "").strip()
 
-            if len(options) < 4:  # Giới hạn chặt chẽ chỉ lấy 4 đáp án hệ ABCD
+            if len(options) < 4:
                 options.append(clean)
                 if is_correct:
                     correct = clean
@@ -226,7 +237,6 @@ if st.session_state.data_thi:
         answered = idx in st.session_state.user_answers
         correct_ans = item.get("correct")
 
-        # Đồng bộ index chính xác khi hiển thị đáp án radio button
         selected_index = None
         if answered:
             user_ans = st.session_state.user_answers[idx]
@@ -257,7 +267,6 @@ if st.session_state.data_thi:
             else:
                 st.error("SAI ❌")
             
-            # Hiển thị đáp án đúng bao gồm cả 3 định dạng: Dấu *, bôi vàng và chữ đỏ bằng HTML
             st.markdown(f"**Đáp án đúng hệ thống tìm thấy:** <span class='correct-highlight'>⭐ {correct_ans}</span>", unsafe_allow_html=True)
 
         c1, c2 = st.columns(2)
