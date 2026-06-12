@@ -104,16 +104,22 @@ with st.sidebar:
     t2 = st.checkbox("Đảo đáp án")
     
     if uploaded_file and st.button("🚀 BẮT ĐẦU", use_container_width=True, type="primary"):
-        st.session_state.user_answers = {}
-        st.session_state.current_idx = 0
-        if uploaded_file.name.lower().endswith(".pdf"):
+    st.session_state.user_answers = {}
+    st.session_state.current_idx = 0
+
+    if uploaded_file.name.lower().endswith(".pdf"):
         st.session_state.data_thi = read_pdf(uploaded_file)
-        else:
+    else:
         st.session_state.data_thi = read_docx(uploaded_file)
-        if t1: random.shuffle(st.session_state.data_thi)
-        if t2: 
-            for it in st.session_state.data_thi: random.shuffle(it['options'])
-        st.rerun()
+
+    if t1:
+        random.shuffle(st.session_state.data_thi)
+
+    if t2:
+        for it in st.session_state.data_thi:
+            random.shuffle(it["options"])
+
+    st.rerun()
 
         if st.session_state.data_thi:
         st.markdown("---")
